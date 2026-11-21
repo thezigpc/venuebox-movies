@@ -1,14 +1,17 @@
 // Handing a TV a video link, and reading back what it's doing. The box owns the TVs: on a box
-// this is bg.playVideo / bg.videoControl / bg.videoStatus (the contract agreed with the
-// GameBroker session; the TV streams straight from the media server, the box only passes the
-// link on). Until a box ships it, VideoOut says "box-too-old", and in dev a fake stands in.
+// this is bg.playVideo / bg.videoControl / bg.videoStatus (SDK 0.17.0, box 0.27.0). The TV
+// streams straight from the media server; the box only passes the link on. In dev, a fake
+// stands in (MOVIES_FAKE_TVS=1).
 //
 // A stream link carries the media server's key: it's passed to the box and to nothing else.
 
-import type { BarGames } from "@bargames/sdk/server";
+import type { BarGames, VideoAction, VideoRequest, VideoResult, VideoStatus } from "@bargames/sdk/server";
 import type { VideoProblem } from "@movies/shared";
 import type { Http } from "./http.js";
 import { log } from "./log.js";
+
+export type { VideoAction, VideoResult, VideoStatus };
+export type PlayVideoArgs = VideoRequest;
 
 export interface VideoTv {
   id: string;
@@ -17,27 +20,6 @@ export interface VideoTv {
   kind: string;
   model?: string;
   online: boolean;
-}
-
-export interface PlayVideoArgs {
-  url: string;
-  mime?: string;
-  title: string;
-  poster?: string;
-  startAt?: number;
-}
-
-export type VideoAction = "pause" | "resume" | "stop" | { seek: number };
-export interface VideoResult {
-  ok: boolean;
-  reason?: string;
-  message?: string;
-}
-export interface VideoStatus {
-  state: "playing" | "paused" | "stopped" | "error";
-  position?: number;
-  duration?: number;
-  message?: string;
 }
 
 export interface VideoOut {
@@ -49,44 +31,22 @@ export interface VideoOut {
   status(displayId: string): Promise<VideoStatus>;
 }
 
-/** The planned SDK calls (not in SDK 0.16.0 yet): looked up at run time. */
-interface BoxVideoApi {
-  playVideo(displayId: string, a: PlayVideoArgs): Promise<VideoResult>;
-  videoControl(displayId: string, action: VideoAction): Promise<VideoResult>;
-  videoStatus(displayId: string): Promise<VideoStatus>;
-}
-
-const hasVideoApi = (bg: unknown): bg is BoxVideoApi =>
-  !!bg && typeof (bg as BoxVideoApi).playVideo === "function" && typeof (bg as BoxVideoApi).videoControl === "function" && typeof (bg as BoxVideoApi).videoStatus === "function";
-
 export function createBoxVideo(bg: BarGames): VideoOut {
-  const api = hasVideoApi(bg) ? bg : null;
-  const problem = (): VideoProblem => (!bg.connected ? "standalone" : !api ? "box-too-old" : null);
+  // Off a box the SDK answers playVideo with reason "unsupported"; we say why first.
+  const problem = (): VideoProblem => (bg.connected ? null : "standalone");
   return {
     fake: false,
     problem,
     async tvs() {
       if (problem()) return [];
-      const list = await bg.tvs();
-      // bg.tvs() gains `video: { kind, model }` for TVs the box can hand a video link to.
-      return list.flatMap((t) => {
-        const v = (t as typeof t & { video?: { kind?: string; model?: string } }).video;
-        if (!v) return [];
-        return [{ id: t.id, name: t.name, ...(t.group ? { group: t.group } : {}), kind: v.kind ?? t.kind, ...(v.model ? { model: v.model } : {}), online: t.online }];
-      });
+      // Only TVs the box can hand a link to carry `video` (a box before 0.27.0 sends none).
+      return (await bg.tvs()).flatMap((t) =>
+        t.video ? [{ id: t.id, name: t.name, ...(t.group ? { group: t.group } : {}), kind: t.video.kind, ...(t.video.model ? { model: t.video.model } : {}), online: t.online }] : [],
+      );
     },
-    async play(displayId, a) {
-      if (!api) return { ok: false, reason: "unsupported", message: problemWords(problem()) };
-      return api.playVideo(displayId, a);
-    },
-    async control(displayId, action) {
-      if (!api) return { ok: false, reason: "unsupported", message: problemWords(problem()) };
-      return api.videoControl(displayId, action);
-    },
-    async status(displayId) {
-      if (!api) return { state: "stopped" };
-      return api.videoStatus(displayId);
-    },
+    play: (displayId, a) => bg.playVideo(displayId, a),
+    control: (displayId, action) => bg.videoControl(displayId, action),
+    status: (displayId) => bg.videoStatus(displayId),
   };
 }
 
@@ -103,7 +63,6 @@ export function reasonWords(reason?: string): string | undefined {
 
 export function problemWords(p: VideoProblem): string {
   if (p === "standalone") return "Playing on TVs needs a Bar Games box: this copy isn't running on one.";
-  if (p === "box-too-old") return "This box can't hand videos to TVs yet. Update the box (it needs video playback, coming in a box update).";
   return "";
 }
 

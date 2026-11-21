@@ -341,7 +341,7 @@ function VideoBanner({ state }: { state: StaffState }) {
   if (p === "standalone") return <p className="banner">This copy isn't on a Bar Games box, so it can't play on TVs. Browsing still works.</p>;
   if (p === "box-too-old") return <p className="banner">This box can't hand videos to TVs yet: it needs a box update with video playback.</p>;
   if (state.video.fake) return <p className="banner dev">Dev mode: pretend TVs. Each play checks the stream link really works.</p>;
-  if (!state.tvs.length) return <p className="banner">The box has no TVs that can play videos (Apple TV or Roku).</p>;
+  if (!state.tvs.length) return <p className="banner">The box has no TVs that can play videos. Movies plays on Apple TVs and Rokus, and needs box 0.27.0 or newer.</p>;
   return null;
 }
 

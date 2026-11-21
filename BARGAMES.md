@@ -1,28 +1,30 @@
-# Bar Games integration report: Movies 0.1.0
+# Bar Games integration report: Movies 0.1.1
 
 - **Level:** 3, an app and a media provider.
-- **SDK:** 0.16.0. The video calls are from the agreed SDK 0.17.0 contract; they're
-  detected at run time.
+- **SDK:** 0.17.0 (box 0.27.0): `bg.playVideo` / `videoControl` / `videoStatus`,
+  `bg.tvs()[].video`, and the standard `video_started` / `video_stopped` events.
 - **GameKit:** 0.10.6.
 - **Manifest:**
   - `id: movies`, port 3017, `routing.basePath: true`, `network.internet: true`;
   - routes `player`/`host` `/` (the staff picker; staff sign-in) and `admin` `/admin`;
   - `media: { launch: [] }` and `video: { play: true }`.
 
-## Checks (mock box, SDK 0.16.0, `--base /movies`, the real Jellyfin, fake TVs)
+## Checks (mock box, SDK 0.17.0, `--base /movies`, the real Jellyfin, the mock box's video TVs)
 
 ```
 ✓ health /health → 200
 ✓ /__bargames/venue.json returns the box's branding ("Movies (mock)")
 ✓ /__bargames/theme.css served
-✓ status.media.targets → 3 TV(s)
+✓ status.media.targets → 2 TV(s)
 ✓ media_list → 7 item(s)
 ✓ phone page (routes.player) / → 200
 all checks passed
 ```
 
-The SDK 0.16.0 mock box flags `video_started` / `video_stopped` as non-standard. They become
-standard in SDK 0.17.0 (agreed with GameBroker), and the box accepts snake_case at run time.
+On the same mock box:
+- `video_started` / `video_stopped` were accepted.
+- fake-patio (Apple TV 4K): HLS for an MKV, pause, +30 s as an absolute seek, stop.
+- fake-bar (Roku 3930X): a direct MKV; skipping is refused before anything is sent to the TV.
 
 ## Events
 
@@ -62,7 +64,7 @@ The brief named them `movie_started` / `movie_stopped`. GameBroker asked for the
 
 ## Image
 
-- `ghcr.io/thezigpc/movies:0.1.0`, published by `.github/workflows/publish-image.yml`.
+- `ghcr.io/thezigpc/movies:0.1.1`, published by `.github/workflows/publish-image.yml`.
 
 ## Verified against the real Jellyfin (12.4.0, from the venue PC, 2026-11-21)
 
@@ -84,7 +86,7 @@ The brief named them `movie_started` / `movie_stopped`. GameBroker asked for the
 - **Roku:** no resume point and no ±30 s. Its built-in player starts at the beginning and
   can't seek (box 0.27.0). The page says so and hides the buttons.
 - **No subtitles.**
-- **Not yet verified on a real Apple TV or Roku:** waiting for box 0.27.0.
+- **Not yet verified on a real Apple TV or Roku:** box 0.27.0 isn't on the venue box yet.
 
 ## SDK requests (sent to GameBroker; answers in brackets)
 

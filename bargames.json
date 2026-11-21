@@ -2,11 +2,11 @@
   "id": "movies",
   "name": "Movies",
   "kind": "app",
-  "version": "0.1.0",
-  "image": "ghcr.io/thezigpc/movies:0.1.0",
+  "version": "0.1.1",
+  "image": "ghcr.io/thezigpc/movies:0.1.1",
   "port": 3017,
   "sdk": {
-    "version": "0.16.0",
+    "version": "0.17.0",
     "level": 3
   },
   "routes": {

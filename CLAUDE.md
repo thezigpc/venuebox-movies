@@ -55,8 +55,8 @@ doubletake or screen capture for movies.
 - `bg.tvs()[].video: { kind, model }`. Roku model = ECP number (3930X); Apple TV = pyatv
   model_str.
 - Events: standard `video_started { tv, title }` / `video_stopped { tv }`.
-- When SDK 0.17.0 lands: vendor it, drop the casts in `video.ts` / `app.ts`, and test on a
-  real Apple TV and Roku at the venue.
+- Vendored SDK 0.17.0 (Movies 0.1.1). Still to do: test on a real Apple TV and Roku at the
+  venue once box 0.27.0 is there, with the user at the TV for the AirPlay PIN.
 
 ## Conventions
 - npm workspaces (`shared`, `server`, `client`), TypeScript, Express 4, React 18 + Vite 5,

@@ -92,9 +92,8 @@ export async function createApp(o: AppOptions): Promise<MoviesApp> {
     source,
     video,
     store,
-    // video_started / video_stopped: standard events from SDK 0.17.0 (box 0.27.0), shared with
-    // other video apps. SDK 0.16.0's EventType doesn't list them yet. Never a link in them.
-    emit: (type, data) => bg.emit({ type: type as unknown as `x-${string}`, data }),
+    // Standard events (SDK 0.17.0), shared with other video apps. Never a link in them.
+    emit: (type, data) => bg.emit({ type, data }),
     now: o.now,
     pollMs: o.pollMs,
   });

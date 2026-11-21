@@ -224,7 +224,7 @@ function TvsCard({ state, notify, reload }: { state: AdminState; notify: Notify;
       </p>
       {state.video.problem === "standalone" && <p className="muted">Not on a Bar Games box: there are no TVs to set up.</p>}
       {state.video.problem === "box-too-old" && <p className="muted">This box can't hand videos to TVs yet (it needs a box update).</p>}
-      {!state.video.problem && !state.tvs.length && <p className="muted">The box has no TVs that can play videos.</p>}
+      {!state.video.problem && !state.tvs.length && <p className="muted">The box has no TVs that can play videos. Movies plays on Apple TVs and Rokus, and needs box 0.27.0 or newer.</p>}
       {state.tvs.length > 0 && (
         <div className="table-wrap">
           <table className="tvs">

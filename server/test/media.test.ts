@@ -101,12 +101,12 @@ describe("box commands", () => {
 });
 
 describe("box video adapter", () => {
-  test("an SDK without playVideo: the box is too old, nothing is listed", async () => {
+  test("a box before 0.27.0 (no video on its TVs): nothing is listed", async () => {
     const bg = makeBarGames({ defaultName: "Movies", coreUrl: core.url, token: CORE_TOKEN });
+    core.tvs = [{ id: "roku:1", name: "Bar", kind: "roku", online: true, canLaunch: [] }];
     const v = createBoxVideo(bg);
-    assert.equal(v.problem(), "box-too-old");
+    assert.equal(v.problem(), null);
     assert.deepEqual(await v.tvs(), []);
-    assert.equal((await v.play("x", { url: "http://a", title: "t" })).ok, false);
   });
 
   test("standalone: needs a box", () => {
