@@ -1,0 +1,32 @@
+# Standalone deployment on a Linux Docker host: docker compose up -d --build
+#
+# Standalone, Movies browses the media server but can't play on TVs: that needs a Bar Games
+# box (the box hands the stream link to the TV). Useful for trying the settings page.
+# Publishes to 127.0.0.1 only. Check `docker ps` for a free host port first.
+services:
+  app:
+    build: .
+    container_name: movies-app
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${HOST_PORT:-3017}:3017"
+    environment:
+      PORT: "3017"
+      DATA_DIR: /data
+      GAME_NAME: "${GAME_NAME:-}"
+      # Leave unset to use the first-run setup screen.
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-}"
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+    volumes:
+      # The server address, certificate pin and access token live here, never in the repo.
+      # The image runs as uid 1000: `sudo chown -R 1000:1000 ./data` if root created it.
+      - ./data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3017/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3

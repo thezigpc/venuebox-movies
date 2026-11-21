@@ -1,0 +1,580 @@
+/* Touch-first, dark (it's a bar), venue colors with fallbacks. */
+:root {
+  --bg: var(--venue-bg, #0f1115);
+  --surface: var(--venue-surface, #1a1d24);
+  --surface-2: #232733;
+  --text: var(--venue-text, #f1f2f5);
+  --muted: #9aa0ad;
+  --primary: var(--venue-primary, #e5a50a);
+  --on-primary: var(--venue-on-primary, #111111);
+  --accent: var(--venue-accent, #5ab0ff);
+  --danger: #e5534b;
+  --ok: #4cc38a;
+  --radius: var(--venue-radius, 12px);
+  --dock-h: 0px;
+  color-scheme: dark;
+}
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--venue-font, system-ui, -apple-system, "Segoe UI", sans-serif);
+  -webkit-tap-highlight-color: transparent;
+}
+body {
+  font-size: 16px;
+  line-height: 1.4;
+}
+h1,
+h2,
+h3 {
+  margin: 0 0 0.4em;
+  line-height: 1.2;
+}
+a {
+  color: var(--accent);
+}
+.muted {
+  color: var(--muted);
+}
+.small {
+  font-size: 0.85em;
+}
+.center {
+  text-align: center;
+}
+.pad {
+  padding: 12px 16px;
+}
+.center-page {
+  text-align: center;
+  padding: 20vh 16px;
+}
+.error {
+  color: var(--danger);
+}
+.ok-line {
+  color: var(--ok);
+}
+
+button,
+.button {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid #343949;
+  border-radius: var(--radius);
+  padding: 10px 16px;
+  min-height: 44px;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+button.primary,
+.button.primary {
+  background: var(--primary);
+  color: var(--on-primary);
+  border-color: transparent;
+  font-weight: 600;
+}
+button.danger {
+  background: transparent;
+  color: var(--danger);
+  border-color: var(--danger);
+}
+button.link {
+  background: none;
+  border: none;
+  color: var(--accent);
+  padding: 4px 8px;
+  min-height: 0;
+}
+button.big {
+  padding: 14px 22px;
+  font-size: 1.05em;
+}
+input,
+select {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid #343949;
+  border-radius: 10px;
+  padding: 10px 12px;
+  min-height: 44px;
+  width: 100%;
+}
+input.num {
+  width: 90px;
+}
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.9em;
+  color: var(--muted);
+}
+label.check {
+  flex-direction: row;
+  align-items: center;
+  color: var(--text);
+}
+label.check input {
+  width: 22px;
+  min-height: 22px;
+}
+.card {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 18px;
+}
+.pad-card {
+  margin: 16px;
+}
+.auth {
+  max-width: 420px;
+  margin: 12vh auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: max(12px, env(safe-area-inset-top)) 16px 8px;
+}
+.top h1 {
+  font-size: 1.5em;
+  margin: 0;
+}
+.top nav {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.notice {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 50;
+  background: var(--surface-2);
+  border-left: 4px solid var(--ok);
+  border-radius: 10px;
+  padding: 10px 12px 10px 16px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  max-width: min(92vw, 640px);
+  box-shadow: 0 8px 30px #0008;
+}
+.notice.is-error {
+  border-left-color: var(--danger);
+}
+.banner {
+  margin: 0 16px 8px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: #3a2f12;
+  color: #ffd98a;
+}
+.banner.dev {
+  background: #12283a;
+  color: #a8d4ff;
+}
+
+/* ---------------------------------------------------------------- staff picker */
+.staff {
+  padding-bottom: calc(var(--dock-space, 190px) + env(safe-area-inset-bottom));
+}
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 4px 16px 12px;
+  align-items: center;
+}
+.search {
+  flex: 1 1 260px;
+  font-size: 1.05em;
+}
+.seg {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.seg button {
+  border-radius: 999px;
+  padding: 8px 14px;
+}
+.seg button.is-on {
+  background: var(--primary);
+  color: var(--on-primary);
+  border-color: transparent;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 18px 14px;
+  padding: 0 16px;
+}
+.grid.small {
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  padding: 0;
+}
+.poster {
+  background: none;
+  border: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  text-align: left;
+  gap: 4px;
+  min-height: 0;
+}
+.poster-img {
+  position: relative;
+  aspect-ratio: 2 / 3;
+  background: var(--surface);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.kind-episode .poster-img {
+  aspect-ratio: 16 / 9;
+}
+.poster-img img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.poster-blank {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  font-size: 2.5em;
+  color: var(--muted);
+}
+.poster-title {
+  font-weight: 600;
+  font-size: 0.95em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.poster-sub {
+  font-size: 0.8em;
+}
+.badge-played {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: var(--ok);
+  color: #04210f;
+  border-radius: 999px;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  font-size: 0.8em;
+}
+.progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 5px;
+  background: #0009;
+}
+.progress > span {
+  display: block;
+  height: 100%;
+  background: var(--primary);
+}
+.progress.wide {
+  position: static;
+  display: block;
+  border-radius: 3px;
+  overflow: hidden;
+  margin-top: 6px;
+}
+
+/* The dock: TVs and the remote together, always on screen. */
+.dock {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  background: color-mix(in srgb, var(--surface) 96%, transparent);
+  backdrop-filter: blur(10px);
+  border-top: 1px solid #2c3140;
+  padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+  display: grid;
+  gap: 10px;
+}
+.dock-tvs {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.tv-chip {
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 150px;
+  max-width: 240px;
+  padding: 8px 12px;
+  gap: 0;
+  border-width: 2px;
+}
+.tv-chip.is-on {
+  border-color: var(--primary);
+}
+.tv-name {
+  font-weight: 600;
+}
+.tv-state {
+  font-size: 0.8em;
+  color: var(--muted);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tv-chip.st-playing .tv-state {
+  color: var(--ok);
+}
+.tv-chip.st-error .tv-state {
+  color: var(--danger);
+}
+.dock-remote {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.np {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex: 1 1 300px;
+  min-width: 0;
+}
+.np-poster {
+  width: 44px;
+  height: 66px;
+  object-fit: cover;
+  border-radius: 6px;
+}
+.np-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.np-text strong,
+.np-text .muted {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.remote {
+  display: flex;
+  gap: 8px;
+}
+.remote button {
+  min-width: 72px;
+  min-height: 52px;
+}
+.dock-idle {
+  margin: 4px 0;
+}
+
+/* Details sheet */
+.sheet-back {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  background: #000a;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+.sheet {
+  position: relative;
+  background: var(--surface);
+  width: min(980px, 100%);
+  max-height: 92vh;
+  overflow-y: auto;
+  border-radius: 18px 18px 0 0;
+  padding: 22px 20px calc(22px + env(safe-area-inset-bottom));
+}
+@media (min-width: 760px) {
+  .sheet-back {
+    align-items: center;
+  }
+  .sheet {
+    border-radius: 18px;
+    max-height: 88vh;
+  }
+}
+.sheet-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  font-size: 1.4em;
+  width: 44px;
+  padding: 0;
+  border-radius: 999px;
+}
+.detail {
+  display: grid;
+  grid-template-columns: minmax(140px, 240px) 1fr;
+  gap: 20px;
+}
+.detail-poster {
+  aspect-ratio: 2 / 3;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--surface-2);
+}
+.detail-poster img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.detail-body h2 {
+  font-size: 1.6em;
+  padding-right: 40px;
+}
+.file-line {
+  font-size: 0.85em;
+  color: var(--accent);
+  margin: 4px 0;
+}
+.overview {
+  color: #d5d8de;
+}
+.play-on {
+  margin-top: 16px;
+  display: grid;
+  gap: 8px;
+}
+.play-on .label {
+  font-size: 0.85em;
+  color: var(--muted);
+}
+.fit {
+  margin: 0;
+  font-size: 0.9em;
+  color: var(--muted);
+}
+.fit.ok {
+  color: var(--ok);
+}
+.actions {
+  margin-top: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+.children {
+  grid-column: 1 / -1;
+}
+.episodes {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 6px;
+}
+.episodes button {
+  width: 100%;
+  justify-content: flex-start;
+  text-align: left;
+  gap: 10px;
+}
+@media (max-width: 600px) {
+  .detail {
+    grid-template-columns: 1fr;
+  }
+  .detail-poster {
+    max-width: 180px;
+  }
+  .remote button {
+    min-width: 56px;
+  }
+}
+
+/* ---------------------------------------------------------------- settings */
+.admin-main {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 0 16px 40px;
+  display: grid;
+  gap: 16px;
+}
+.row-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: flex-end;
+  margin: 10px 0;
+}
+.row-form .grow {
+  flex: 1 1 320px;
+}
+.warn {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: #3a2f12;
+  color: #ffe2a3;
+}
+.warn p {
+  margin: 6px 0;
+}
+.fp {
+  display: block;
+  word-break: break-all;
+  font-size: 0.85em;
+  background: #0006;
+  padding: 6px 8px;
+  border-radius: 6px;
+  margin: 6px 0;
+}
+.table-wrap {
+  overflow-x: auto;
+}
+table.tvs {
+  width: 100%;
+  border-collapse: collapse;
+}
+.tvs th,
+.tvs td {
+  text-align: left;
+  padding: 8px 6px;
+  border-bottom: 1px solid #2c3140;
+  vertical-align: middle;
+}
+.tvs select {
+  min-width: 200px;
+}

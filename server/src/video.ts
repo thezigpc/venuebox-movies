@@ -1,0 +1,198 @@
+// Handing a TV a video link, and reading back what it's doing. The box owns the TVs: on a box
+// this is bg.playVideo / bg.videoControl / bg.videoStatus (the contract agreed with the
+// GameBroker session; the TV streams straight from the media server, the box only passes the
+// link on). Until a box ships it, VideoOut says "box-too-old", and in dev a fake stands in.
+//
+// A stream link carries the media server's key: it's passed to the box and to nothing else.
+
+import type { BarGames } from "@bargames/sdk/server";
+import type { VideoProblem } from "@movies/shared";
+import type { Http } from "./http.js";
+import { log } from "./log.js";
+
+export interface VideoTv {
+  id: string;
+  name: string;
+  group?: string;
+  kind: string;
+  model?: string;
+  online: boolean;
+}
+
+export interface PlayVideoArgs {
+  url: string;
+  mime?: string;
+  title: string;
+  poster?: string;
+  startAt?: number;
+}
+
+export type VideoAction = "pause" | "resume" | "stop" | { seek: number };
+export interface VideoResult {
+  ok: boolean;
+  reason?: string;
+  message?: string;
+}
+export interface VideoStatus {
+  state: "playing" | "paused" | "stopped" | "error";
+  position?: number;
+  duration?: number;
+  message?: string;
+}
+
+export interface VideoOut {
+  readonly fake: boolean;
+  problem(): VideoProblem;
+  tvs(): Promise<VideoTv[]>;
+  play(displayId: string, a: PlayVideoArgs): Promise<VideoResult>;
+  control(displayId: string, action: VideoAction): Promise<VideoResult>;
+  status(displayId: string): Promise<VideoStatus>;
+}
+
+/** The planned SDK calls (not in SDK 0.16.0 yet): looked up at run time. */
+interface BoxVideoApi {
+  playVideo(displayId: string, a: PlayVideoArgs): Promise<VideoResult>;
+  videoControl(displayId: string, action: VideoAction): Promise<VideoResult>;
+  videoStatus(displayId: string): Promise<VideoStatus>;
+}
+
+const hasVideoApi = (bg: unknown): bg is BoxVideoApi =>
+  !!bg && typeof (bg as BoxVideoApi).playVideo === "function" && typeof (bg as BoxVideoApi).videoControl === "function" && typeof (bg as BoxVideoApi).videoStatus === "function";
+
+export function createBoxVideo(bg: BarGames): VideoOut {
+  const api = hasVideoApi(bg) ? bg : null;
+  const problem = (): VideoProblem => (!bg.connected ? "standalone" : !api ? "box-too-old" : null);
+  return {
+    fake: false,
+    problem,
+    async tvs() {
+      if (problem()) return [];
+      const list = await bg.tvs();
+      // bg.tvs() gains `video: { kind, model }` for TVs the box can hand a video link to.
+      return list.flatMap((t) => {
+        const v = (t as typeof t & { video?: { kind?: string; model?: string } }).video;
+        if (!v) return [];
+        return [{ id: t.id, name: t.name, ...(t.group ? { group: t.group } : {}), kind: v.kind ?? t.kind, ...(v.model ? { model: v.model } : {}), online: t.online }];
+      });
+    },
+    async play(displayId, a) {
+      if (!api) return { ok: false, reason: "unsupported", message: problemWords(problem()) };
+      return api.playVideo(displayId, a);
+    },
+    async control(displayId, action) {
+      if (!api) return { ok: false, reason: "unsupported", message: problemWords(problem()) };
+      return api.videoControl(displayId, action);
+    },
+    async status(displayId) {
+      if (!api) return { state: "stopped" };
+      return api.videoStatus(displayId);
+    },
+  };
+}
+
+/** The box's refusal reasons, in words (its message wins when it has one). */
+export function reasonWords(reason?: string): string | undefined {
+  switch (reason) {
+    case "offline": return "The box can't reach that TV right now.";
+    case "unsupported": return "That TV can't play video links.";
+    case "not-allowed": return "The venue hasn't allowed Movies to play videos: approve it on the box's Apps page.";
+    case "needs-pairing": return "The Apple TV needs pairing for video first: in the box admin, Pair TV control, and type the PIN the TV shows.";
+    default: return undefined;
+  }
+}
+
+export function problemWords(p: VideoProblem): string {
+  if (p === "standalone") return "Playing on TVs needs a Bar Games box: this copy isn't running on one.";
+  if (p === "box-too-old") return "This box can't hand videos to TVs yet. Update the box (it needs video playback, coming in a box update).";
+  return "";
+}
+
+// ------------------------------------------------------------------ dev fake
+
+interface FakeState {
+  state: VideoStatus["state"];
+  position: number;
+  since: number;
+  title: string;
+  message?: string;
+}
+
+/**
+ * Pretend TVs for dev (MOVIES_FAKE_TVS=1). Each play really fetches the link, the way the
+ * TV would: a direct file's first bytes, or an HLS master playlist, its first variant and
+ * its first segment. So a test on the dev box proves the server hands out a link that works,
+ * without any TV. It never logs the link.
+ */
+export function createFakeVideo(opts: { http: Http; now?: () => number; probe?: boolean }): VideoOut & { probes: Map<string, string> } {
+  const now = opts.now ?? Date.now;
+  const tvs: VideoTv[] = [
+    { id: "fake-appletv", name: "Fake Apple TV 4K", kind: "appletv", model: "AppleTV4KGen3", online: true },
+    { id: "fake-roku", name: "Fake Roku Express", kind: "roku", model: "3930X", online: true },
+    { id: "fake-other", name: "Fake other TV", kind: "chromecast", online: true },
+  ];
+  const states = new Map<string, FakeState>();
+  const probes = new Map<string, string>();
+
+  const position = (s: FakeState) => (s.state === "playing" ? s.position + (now() - s.since) / 1000 : s.position);
+
+  async function probe(displayId: string, url: string, mime?: string): Promise<string> {
+    const get = (u: string, range?: boolean) => opts.http({ url: u, headers: range ? { range: "bytes=0-65535", accept: "*/*" } : { accept: "*/*" }, timeoutMs: 60_000, maxBytes: 4 * 1024 * 1024 });
+    const firstLine = (text: string) => text.split(/\r?\n/).map((l) => l.trim()).find((l) => l && !l.startsWith("#"));
+    if (mime?.includes("mpegurl")) {
+      const master = await get(url);
+      if (master.status !== 200) return `HLS master playlist: HTTP ${master.status}`;
+      const variant = firstLine(master.text());
+      if (!variant) return "HLS master playlist had no variant";
+      const vUrl = new URL(variant, url).toString();
+      const media = await get(vUrl);
+      if (media.status !== 200) return `HLS variant playlist: HTTP ${media.status}`;
+      const seg = firstLine(media.text());
+      if (!seg) return "HLS variant playlist had no segment";
+      const s = await get(new URL(seg, vUrl).toString());
+      return s.status === 200 ? `HLS ok: first segment ${s.body.length} bytes (${s.headers["content-type"] ?? "?"})` : `HLS first segment: HTTP ${s.status}`;
+    }
+    const r = await get(url, true);
+    return r.status === 200 || r.status === 206 ? `file ok: HTTP ${r.status}, ${r.body.length} bytes (${r.headers["content-type"] ?? "?"})` : `file: HTTP ${r.status}`;
+  }
+
+  return {
+    fake: true,
+    probes,
+    problem: () => null,
+    tvs: async () => tvs,
+    async play(displayId, a) {
+      if (!tvs.some((t) => t.id === displayId)) return { ok: false, reason: "unknown", message: "No such TV." };
+      states.set(displayId, { state: "playing", position: a.startAt ?? 0, since: now(), title: a.title });
+      if (opts.probe !== false) {
+        void probe(displayId, a.url, a.mime)
+          .then((r) => {
+            probes.set(displayId, r);
+            log.info("fake-tv", "stream check", { tv: displayId, title: a.title, result: r });
+            if (!/ok/.test(r)) states.set(displayId, { state: "error", position: 0, since: now(), title: a.title, message: r });
+          })
+          .catch((err) => {
+            probes.set(displayId, `failed: ${(err as Error).message}`);
+            log.warn("fake-tv", "stream check failed", { tv: displayId, err: (err as Error).message });
+            states.set(displayId, { state: "error", position: 0, since: now(), title: a.title, message: (err as Error).message });
+          });
+      }
+      return { ok: true };
+    },
+    async control(displayId, action) {
+      if (typeof action === "object" && tvs.find((t) => t.id === displayId)?.kind === "roku") return { ok: false, reason: "unsupported", message: "A Roku can't seek." };
+      const s = states.get(displayId);
+      if (!s || s.state === "stopped") return { ok: false, message: "Nothing is playing there." };
+      const pos = position(s);
+      if (action === "pause") states.set(displayId, { ...s, state: "paused", position: pos, since: now() });
+      else if (action === "resume") states.set(displayId, { ...s, state: "playing", position: pos, since: now() });
+      else if (action === "stop") states.set(displayId, { ...s, state: "stopped", position: pos, since: now() });
+      else states.set(displayId, { ...s, position: Math.max(0, action.seek), since: now() });
+      return { ok: true };
+    },
+    async status(displayId) {
+      const s = states.get(displayId);
+      if (!s) return { state: "stopped" };
+      return { state: s.state, position: Math.round(position(s)), ...(s.message ? { message: s.message } : {}) };
+    },
+  };
+}

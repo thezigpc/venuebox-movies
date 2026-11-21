@@ -1,0 +1,50 @@
+{
+  "id": "movies",
+  "name": "Movies",
+  "kind": "app",
+  "version": "0.1.0",
+  "image": "ghcr.io/thezigpc/movies:0.1.0",
+  "port": 3017,
+  "sdk": {
+    "version": "0.16.0",
+    "level": 3
+  },
+  "routes": {
+    "player": "/",
+    "host": "/",
+    "admin": "/admin"
+  },
+  "routing": {
+    "basePath": true
+  },
+  "health": "/health",
+  "events": [
+    "video_started",
+    "video_stopped"
+  ],
+  "commands": [
+    "media_list",
+    "media_play",
+    "media_stop"
+  ],
+  "brandable": [
+    "displayName",
+    "accent"
+  ],
+  "resources": {
+    "memory": "256m",
+    "cpus": 1
+  },
+  "network": {
+    "internet": true
+  },
+  "env": {
+    "DATA_DIR": "/data"
+  },
+  "media": {
+    "launch": []
+  },
+  "video": {
+    "play": true
+  }
+}
