@@ -4,12 +4,12 @@
 // so its "now playing" and resume points stay right. Emits video_started / video_stopped,
 // with the TV's name and the title only: never a link.
 
-import { effectiveProfile, profileFor, type ItemDetail, type NowPlaying, type TrackChoice, type Tracks, type TvInfo, type TvProfile, type TvProfileId, type TvState } from "@movies/shared";
+import { audioTrackId, effectiveProfile, profileFor, subtitleTrackId, trackIndexOf, type ItemDetail, type NowPlaying, type TrackChoice, type Tracks, type TvInfo, type TvProfile, type TvProfileId, type TvState } from "@movies/shared";
 import { log } from "./log.js";
 import type { MediaSource, PlaySession } from "./sources/types.js";
 import { SourceError } from "./sources/types.js";
 import type { Store } from "./store.js";
-import type { VideoAction, VideoOut, VideoTv } from "./video.js";
+import type { VideoAction, VideoOut, VideoRemote, VideoTv } from "./video.js";
 import { canSeek, problemWords, reasonWords } from "./video.js";
 
 export { canSeek };
@@ -39,7 +39,15 @@ interface Current {
   lastReported: string;
   tracks?: Tracks;
   audioIndex?: number;
+  /** The subtitle on: burned in, or shown by a player that switches tracks itself. */
   subtitleIndex: number | null;
+  /** The subtitle burned into the picture (only a new stream takes it away). */
+  burned: number | null;
+  /** The TV's player switches tracks itself (SDK 0.19.0). */
+  native: boolean;
+  /** The last audio and subtitle the TV reported, to spot changes made on the TV. */
+  seenAudio?: string;
+  seenSubtitle?: string | null;
 }
 
 /**
@@ -139,7 +147,8 @@ export class Player {
 
   start(): void {
     if (this.timer) return;
-    this.timer = setInterval(() => void this.tick(), this.o.pollMs ?? 4000);
+    // About every 2 s: the TV's own remote is read from its status (SDK 0.19.0).
+    this.timer = setInterval(() => void this.tick(), this.o.pollMs ?? 2000);
     this.timer.unref();
   }
 
@@ -199,6 +208,7 @@ export class Player {
       capMbps: st.capMbps,
       allow4k: st.allow4k,
       canSeek: canSeek(tv),
+      tracksNative: tv.formats?.tracks === true,
       now: this.nowPlaying(tv.id),
     };
   }
@@ -285,10 +295,11 @@ export class Player {
     // A Roku's built-in player always starts from the beginning (and can't seek); so does a
     // Venuebox app that says it can't seek.
     const startAt = !canSeek(tv) ? undefined : o.at != null ? (o.at > 5 ? o.at : undefined) : resume && item.resumeSec && item.resumeSec > 30 ? item.resumeSec : undefined;
-    const pb = await source.playback(id, profile, { startAt, ...tracks });
+    const native = tv.formats?.tracks === true;
+    const pb = await source.playback(id, profile, { startAt, ...tracks, native });
     const title = item.kind === "episode" && item.seriesTitle ? `${item.seriesTitle}: ${item.title}` : item.title;
     const poster = source.tvPosterUrl(id);
-    const r = await this.o.video.play(tv.id, { url: pb.url, mime: pb.mime, title, ...(poster ? { poster } : {}), ...(pb.startAt ? { startAt: pb.startAt } : {}) });
+    const r = await this.o.video.play(tv.id, { url: pb.url, mime: pb.mime, title, ...(poster ? { poster } : {}), ...(pb.startAt ? { startAt: pb.startAt } : {}), ...(pb.tracks ? { tracks: pb.tracks } : {}) });
     if (!r.ok) throw new PlayError(r.message || reasonWords(r.reason) || `${tv.name} didn't take the video${r.reason ? ` (${r.reason})` : ""}.`);
     const now = this.now();
     s.message = undefined;
@@ -308,6 +319,8 @@ export class Player {
       ...(item.tracks ? { tracks: item.tracks } : {}),
       ...(pb.audioIndex != null ? { audioIndex: pb.audioIndex } : {}),
       subtitleIndex: pb.subtitleIndex,
+      burned: pb.burned,
+      native,
     };
     log.info("player", "playing", { tv: tv.name, title, method: pb.session.method, why: pb.reasons.join("; ") || undefined, startAt: pb.startAt, audio: pb.audioIndex, subtitle: pb.subtitleIndex ?? undefined });
     await source.reportStart(pb.session, { positionSec: pb.startAt ?? 0 }).catch((err) => log.warn("player", "report start failed", { err: String(err) }));
@@ -351,7 +364,7 @@ export class Player {
    * stream starts again with them, at the same spot (a Roku, which can't start part-way, from
    * the beginning). The rest of a series or collection gets the same languages.
    */
-  async setTracks(displayId: string, choice: TrackChoice): Promise<{ restartedAt: number }> {
+  async setTracks(displayId: string, choice: TrackChoice): Promise<{ inPlace: boolean; restartedAt?: number }> {
     const s = this.sessions.get(displayId);
     const c = s?.current;
     if (!s || !c) throw new PlayError("Nothing is playing on that TV.");
@@ -360,6 +373,12 @@ export class Player {
     if (!tv) throw new PlayError("The box doesn't know that TV any more.", 404);
     if (choice.audioIndex != null && !c.tracks?.audio.some((a) => a.index === choice.audioIndex)) throw new PlayError("That audio track isn't in this file.", 400);
     if (choice.subtitleIndex != null && !c.tracks?.subtitles.some((t) => t.index === choice.subtitleIndex)) throw new PlayError("Those subtitles aren't in this file.", 400);
+    const want = { audio: choice.audioIndex ?? c.tracks?.defaultAudio, sub: choice.subtitleIndex ?? null };
+    if (c.native && (await this.switchInPlace(s, c, want))) {
+      s.prefs = prefsFrom({ id: c.itemId, ...(c.tracks ? { tracks: c.tracks } : {}) }, choice);
+      log.info("player", "tracks switched on the TV", { tv: tv.name, audio: want.audio, subtitle: want.sub ?? undefined });
+      return { inPlace: true };
+    }
     const at = canSeek(tv) ? Math.max(0, Math.round(c.position) - 3) : 0;
     const prev = s.prefs;
     s.prefs = prefsFrom({ id: c.itemId, ...(c.tracks ? { tracks: c.tracks } : {}) }, choice);
@@ -379,7 +398,70 @@ export class Player {
       s.busy = false;
     }
     log.info("player", "tracks changed", { tv: tv.name, audio: choice.audioIndex, subtitle: choice.subtitleIndex ?? undefined, at });
-    return { restartedAt: at };
+    return { inPlace: false, restartedAt: at };
+  }
+
+  /**
+   * Asks a player that switches tracks itself to do it. False: it can't (the track isn't in
+   * its stream, or a burned-in subtitle must go), so the stream has to start again.
+   */
+  private async switchInPlace(s: Session, c: Current, want: { audio?: number; sub: number | null }): Promise<boolean> {
+    if (c.burned != null && want.sub !== c.burned) return false;
+    if (want.audio != null && want.audio !== c.audioIndex) {
+      const r = await this.o.video.control(s.displayId, { audio: audioTrackId(want.audio) });
+      if (!r.ok) return false;
+      c.audioIndex = want.audio;
+      c.seenAudio = audioTrackId(want.audio);
+    }
+    if (want.sub !== c.subtitleIndex) {
+      const r = await this.o.video.control(s.displayId, { subtitle: want.sub == null ? null : subtitleTrackId(want.sub) });
+      if (!r.ok) return false;
+      c.subtitleIndex = want.sub;
+      c.seenSubtitle = want.sub == null ? null : subtitleTrackId(want.sub);
+    }
+    return true;
+  }
+
+  /** Something asked on the TV's own remote that only we can do (SDK 0.19.0). */
+  private async remoteAsked(s: Session, c: Current, items: VideoRemote[]): Promise<void> {
+    for (const a of items) {
+      if (this.sessions.get(s.displayId) !== s || s.current !== c) return;
+      const tv = (await this.tvs()).find((t) => t.id === s.displayId);
+      if (!tv) return;
+      if (a === "next" || a === "previous") {
+        const to = a === "next" ? s.index + 1 : c.position > 10 || s.index === 0 ? s.index : s.index - 1;
+        if (to >= s.queue.length) {
+          log.info("player", "next asked on the TV: nothing after this", { tv: s.tvName });
+          continue;
+        }
+        log.info("player", `${a} asked on the TV`, { tv: s.tvName });
+        s.busy = true;
+        try {
+          await this.report("stop", c);
+          s.current = null;
+          s.index = to;
+          await this.startCurrent(s, tv, false, { at: 0, emit: true });
+        } catch (err) {
+          log.warn("player", `${a} didn't start`, { tv: s.tvName, err: String(err) });
+        } finally {
+          s.busy = false;
+        }
+        return;
+      }
+      // A track the player couldn't switch to by itself: a new stream with it.
+      const choice: TrackChoice = { ...(c.audioIndex != null ? { audioIndex: c.audioIndex } : {}), subtitleIndex: c.subtitleIndex };
+      if ("audio" in a) {
+        const i = trackIndexOf(a.audio, "audio");
+        if (i == null || !c.tracks?.audio.some((t) => t.index === i)) continue;
+        choice.audioIndex = i;
+      } else {
+        const i = a.subtitle == null ? null : trackIndexOf(a.subtitle, "subtitle");
+        if (i === undefined || (i != null && !c.tracks?.subtitles.some((t) => t.index === i))) continue;
+        choice.subtitleIndex = i;
+      }
+      await this.setTracks(s.displayId, choice).catch((err) => log.warn("player", "a track asked on the TV didn't start", { tv: s.tvName, err: String(err) }));
+      return;
+    }
   }
 
   /** Ends a TV's session: tells the server where it stopped, optionally stops the TV. */
@@ -435,6 +517,41 @@ export class Player {
     if (typeof st.position === "number") c.position = st.position;
     if (st.duration && st.duration > 0) c.durationSec = Math.round(st.duration);
 
+    if (c.native && (st.state === "playing" || st.state === "paused")) {
+      // A change made on the TV itself (its remote or menu): follow it, and let the rest of a
+      // series keep those languages.
+      const audio = typeof st.audio === "string" ? st.audio : undefined;
+      const sub = st.subtitle === null ? null : typeof st.subtitle === "string" ? st.subtitle : undefined;
+      let changed = false;
+      if (audio !== undefined && c.seenAudio !== undefined && audio !== c.seenAudio) {
+        const i = trackIndexOf(audio, "audio");
+        if (i != null) (c.audioIndex = i), (changed = true);
+      }
+      if (sub !== undefined && c.seenSubtitle !== undefined && sub !== c.seenSubtitle) {
+        const i = sub == null ? null : trackIndexOf(sub, "subtitle");
+        if (i !== undefined) (c.subtitleIndex = i), (changed = true);
+      }
+      if (audio !== undefined) c.seenAudio = audio;
+      if (sub !== undefined) c.seenSubtitle = sub;
+      if (changed) {
+        s.prefs = prefsFrom({ id: c.itemId, ...(c.tracks ? { tracks: c.tracks } : {}) }, { ...(c.audioIndex != null ? { audioIndex: c.audioIndex } : {}), subtitleIndex: c.subtitleIndex });
+        log.info("player", "tracks changed on the TV", { tv: s.tvName, audio: c.audioIndex, subtitle: c.subtitleIndex ?? undefined });
+        // A burned-in subtitle can't be taken away by the player: a new stream without it.
+        if (c.burned != null && c.subtitleIndex !== c.burned) {
+          const tv = (await this.tvs()).find((t) => t.id === s.displayId);
+          if (tv) {
+            await this.setTracks(s.displayId, { ...(c.audioIndex != null ? { audioIndex: c.audioIndex } : {}), subtitleIndex: c.subtitleIndex }).catch((err) => log.warn("player", "dropping the burned-in subtitle failed", { tv: s.tvName, err: String(err) }));
+            return;
+          }
+        }
+      }
+    }
+    if (st.remote?.length && (st.state === "playing" || st.state === "paused")) {
+      c.seen = true;
+      c.state = st.state;
+      await this.remoteAsked(s, c, st.remote);
+      if (s.current !== c) return;
+    }
     if (st.state === "playing" || st.state === "paused") {
       c.seen = true;
       const changed = c.state !== st.state;

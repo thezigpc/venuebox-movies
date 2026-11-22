@@ -66,10 +66,19 @@ doubletake or screen capture for movies.
   - With none chosen, `withoutBurnedSubtitles` removes Jellyfin's own pick.
   - `Player.setTracks` restarts at the position; `tracksFor` carries the languages along a
     queue; `Session.busy` keeps the poller away while a stream starts.
+- Native tracks (0.4.0, SDK 0.19.0, `formats.tracks`):
+  - `playVideo.tracks` is built by `nativeTracks` (jellyfin.ts). Ids are "a<index>" and
+    "s<index>" (shared/tracks.ts).
+  - `index` is the place among tracks of that kind in the file (direct play only); in HLS,
+    only the audio in the stream has index 0.
+  - Text subtitles get a WebVTT url (`/Videos/{id}/{msid}/Subtitles/{i}/0/Stream.vtt`, which
+    carries the key, so never log it).
+  - `switchInPlace` tries `videoControl({audio}|{subtitle})` first. `pollOne` follows
+    `status.audio/subtitle` and acts on `status.remote` (next/previous/tracks).
 - Events: standard `video_started { tv, title }` / `video_stopped { tv }`.
 - SDK 0.18.2: `kind: "local"` (a screen on the box, mpv). `formats` wins whatever the kind
   (`profileFor`, `canSeek`).
-- Vendored SDK 0.18.2 (Movies 0.2.2). Installed on the venue box (0.1.1). **No live testing
+- Vendored SDK 0.19.0 (Movies 0.4.0). Installed on the venue box (0.1.1). **No live testing
   on the venue's TVs until the user says so.**
 
 ## Conventions

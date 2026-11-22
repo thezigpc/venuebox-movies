@@ -118,6 +118,8 @@ export interface TvFormats {
   passthrough?: string[];
   /** Picture ranges it shows correctly: "sdr" "hdr10" "hdr10plus" "hlg" "dovi" (SDK 0.18.1). Absent: SDR only. */
   ranges?: string[];
+  /** Switches audio tracks and subtitles by itself (SDK 0.19.0). */
+  tracks?: boolean;
 }
 
 const RANGE_NAMES: Record<string, string> = { sdr: "SDR", hdr10: "HDR10", hdr10plus: "HDR10Plus", "hdr10+": "HDR10Plus", hlg: "HLG", dovi: "DOVI", dolbyvision: "DOVI" };

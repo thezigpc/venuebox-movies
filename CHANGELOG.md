@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.4.0 (2026-11-21)
+- SDK 0.19.0 (box 0.29.0): **players that switch tracks themselves** (`formats.tracks`:
+  screens on the box now, the Venuebox apps as they update).
+  - A file they can play as it is goes as it is, with every audio track and subtitle
+    listed, even with another audio track or subtitles chosen. No repackaging and no
+    burning in.
+  - Text subtitles (SRT, ASS…) go as a WebVTT side file, also on a converted stream. Only a
+    picture subtitle (PGS, DVD) on a converted stream is still burned in.
+  - Switching while playing happens on the TV, with no new stream. If the player can't (the
+    track isn't in its stream, or a burned-in subtitle has to go), the stream starts again
+    as before.
+  - **The TV's own remote:** audio and subtitle changes made on the TV show on the iPad and
+    carry on to the next episode. "Next" and "previous" move through a series or a
+    collection. A track the player can't switch to starts a new stream with it.
+  - The status is read about every 2 s while something plays.
+- Apple TVs and Rokus work as in 0.3.0.
+
 ## 0.3.0 (2026-11-21)
 - **Audio track and subtitles**, picked before a movie starts (the details sheet) and changed
   while it plays (the dock: "Audio & subtitles").

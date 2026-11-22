@@ -214,6 +214,15 @@ export class FakeTvs implements VideoOut {
   }
   async control(displayId: string, action: VideoAction) {
     this.controls.push({ displayId, action });
+    if (typeof action === "object" && ("audio" in action || "subtitle" in action)) {
+      // Like a player that takes tracks: a track in its stream, or a side file, or nothing.
+      const tracks = [...this.plays].reverse().find((p) => p.displayId === displayId)?.args.tracks;
+      const native = this.list.find((t) => t.id === displayId)?.formats?.tracks === true;
+      if (!native || !tracks) return { ok: false, reason: "unsupported" };
+      if ("audio" in action) return tracks.audio?.some((t) => t.id === action.audio && t.index != null) ? { ok: true } : { ok: false, reason: "unsupported" };
+      if (action.subtitle == null) return { ok: true };
+      return tracks.subtitles?.some((t) => t.id === action.subtitle && (t.index != null || t.url)) ? { ok: true } : { ok: false, reason: "unsupported" };
+    }
     return { ok: true };
   }
   async status(displayId: string) {

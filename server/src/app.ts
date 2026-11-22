@@ -319,8 +319,8 @@ export async function createApp(o: AppOptions): Promise<MoviesApp> {
     "/tvs/:id/tracks",
     safe(async (req, res) => {
       const choice = trackChoice((req.body ?? {}) as Record<string, unknown>);
-      await player.setTracks(String(req.params.id), choice);
-      res.json({ ok: true, value: player.nowPlaying(String(req.params.id)) });
+      const r = await player.setTracks(String(req.params.id), choice);
+      res.json({ ok: true, value: player.nowPlaying(String(req.params.id)), inPlace: r.inPlace });
     }),
   );
 

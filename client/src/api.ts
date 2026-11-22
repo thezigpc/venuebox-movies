@@ -76,7 +76,7 @@ export const api = {
   search: (q: string) => v(request<{ value: Card[] }>("GET", `/api/admin/search?q=${encodeURIComponent(q)}`)),
   item: (id: string) => v(request<{ value: ItemWithFit }>("GET", `/api/admin/items/${encodeURIComponent(id)}`)),
   play: (displayId: string, itemId: string, resume: boolean, tracks: TrackChoice = {}) => v(request<{ value: { title: string; method: "direct" | "transcode"; reasons: string[] } }>("POST", "/api/admin/play", { displayId, itemId, resume, ...tracks })),
-  tracks: (displayId: string, choice: TrackChoice) => v(request<{ value: NowPlaying | null }>("POST", `/api/admin/tvs/${encodeURIComponent(displayId)}/tracks`, choice)),
+  tracks: (displayId: string, choice: TrackChoice) => request<{ value: NowPlaying | null; inPlace: boolean }>("POST", `/api/admin/tvs/${encodeURIComponent(displayId)}/tracks`, choice),
   control: (displayId: string, action: ControlAction) => request("POST", `/api/admin/tvs/${encodeURIComponent(displayId)}/control`, { action }),
 
   setServer: (url: string) => v(request<{ value: { notes: string[]; test: TestResult; server: ServerStatus } }>("PUT", "/api/admin/server", { url })),

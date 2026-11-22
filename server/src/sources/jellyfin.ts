@@ -6,9 +6,9 @@
 // Every address is built from the configured server URL (any scheme, host, port, base path),
 // so a move behind a tunnel is a settings change only.
 
-import { canDirectPlay, serverPath, type Card, type FileDetails, type FileInfo, type ItemDetail, type ItemKind, type Library, type Page, type TestResult, type TrackChoice, type Tracks, type TvProfile } from "@movies/shared";
+import { audioTrackId, canDirectPlay, serverPath, subtitleTrackId, type Card, type FileDetails, type FileInfo, type ItemDetail, type ItemKind, type Library, type Page, type TestResult, type TrackChoice, type Tracks, type TvProfile } from "@movies/shared";
 import { HttpError, type Http, type HttpResponse } from "../http.js";
-import { SourceError, type MediaSource, type Playback, type PlaySession, type ReportPosition } from "./types.js";
+import { SourceError, type MediaSource, type NativeTrack, type NativeTracks, type Playback, type PlaybackOptions, type PlaySession, type ReportPosition } from "./types.js";
 import { log } from "../log.js";
 
 export interface JellyfinAuth {
@@ -502,19 +502,27 @@ export class JellyfinSource implements MediaSource {
     return r.json<{ MediaSources?: JSource[]; PlaySessionId?: string; ErrorCode?: string }>();
   }
 
-  async playback(id: string, tv: TvProfile, opts: { startAt?: number } & TrackChoice = {}): Promise<Playback> {
+  async playback(id: string, tv: TvProfile, opts: PlaybackOptions = {}): Promise<Playback> {
     const auth = this.requireAuth();
     let info = await this.playbackInfo(id, tv, true);
     const first = info.MediaSources?.[0];
-    // A chosen track: another audio track than the file's default, or a subtitle to burn in.
-    const has = (type: string, i?: number | null) => i != null && i >= 0 && (first?.MediaStreams ?? []).some((m) => m.Type === type && m.Index === i);
+    const streams = first?.MediaStreams ?? [];
+    const find = (type: string, i?: number | null) => (i != null && i >= 0 ? streams.find((m) => m.Type === type && m.Index === i) : undefined);
     const defAudio = first ? pickAudio(first)?.Index : undefined;
-    const audioIndex = has("Audio", opts.audioIndex) && opts.audioIndex !== defAudio ? opts.audioIndex : undefined;
-    const subtitleIndex = has("Subtitle", opts.subtitleIndex) ? (opts.subtitleIndex as number) : null;
-    if (first && (audioIndex != null || subtitleIndex != null)) {
-      // Only the server's HLS can carry them (the TV's own player picks the default track).
-      info = await this.playbackInfo(id, tv, false, { mediaSourceId: first.Id, audioIndex, subtitleIndex: subtitleIndex ?? -1 });
-    } else if (first?.SupportsDirectPlay && !first.TranscodingUrl && !canDirectPlay(tv, fileInfo(fileDetails(first))).ok) {
+    const audioIndex = find("Audio", opts.audioIndex) && opts.audioIndex !== defAudio ? opts.audioIndex : undefined;
+    const sub = find("Subtitle", opts.subtitleIndex);
+    const subtitleIndex = sub?.Index ?? null;
+    const fitsAsIs = !!first?.SupportsDirectPlay && !first.TranscodingUrl && canDirectPlay(tv, fileInfo(fileDetails(first))).ok;
+    const native = opts.native === true;
+    // A player that switches tracks itself (SDK 0.19.0) gets the file as it is with every track
+    // listed, and text subtitles as a side file: no repackaging, nothing burned in. Only a
+    // picture subtitle (PGS, DVD) that isn't inside a file it plays as it is gets burned in.
+    // Other TVs pick the default track themselves, so a choice means the server's HLS.
+    const burn = sub ? (native ? sub.IsTextSubtitleStream !== true && (!fitsAsIs || sub.IsExternal === true) : true) : false;
+    const viaHls = burn || (audioIndex != null && (!native || !fitsAsIs));
+    if (first && viaHls) {
+      info = await this.playbackInfo(id, tv, false, { mediaSourceId: first.Id, audioIndex, subtitleIndex: burn ? (subtitleIndex as number) : -1 });
+    } else if (first?.SupportsDirectPlay && !first.TranscodingUrl && !fitsAsIs) {
       // The server would send the file as it is, but our own check says this TV can't play it
       // (an MKV on an Apple TV, 4K turned off): ask again for its HLS.
       info = await this.playbackInfo(id, tv, false);
@@ -539,6 +547,8 @@ export class JellyfinSource implements MediaSource {
       // The TV's own order: Jellyfin calls an MP4 "mov,mp4,m4a,…", and .mp4 is the safer name.
       const ext = tv.directContainers.find((c) => containers.includes(c)) ?? containers[0] ?? "mp4";
       const q = new URLSearchParams({ static: "true", MediaSourceId: src.Id, PlaySessionId: ps, DeviceId: this.o.deviceId(), api_key: auth.token });
+      const audioOn = native && opts.audioIndex != null && find("Audio", opts.audioIndex) ? opts.audioIndex : defAudio;
+      const subOn = native ? subtitleIndex : null;
       return {
         url: serverPath(base, `/Videos/${encodeURIComponent(id)}/stream.${ext}?${q}`),
         mime: MIME[ext] ?? "video/mp4",
@@ -546,32 +556,90 @@ export class JellyfinSource implements MediaSource {
         ...(startAt ? { startAt } : {}),
         reasons: [],
         session: { itemId: id, mediaSourceId: src.Id, playSessionId: ps, method: "direct" },
-        ...(typeof defAudio === "number" ? { audioIndex: defAudio } : {}),
-        subtitleIndex: null,
+        ...(typeof audioOn === "number" ? { audioIndex: audioOn } : {}),
+        subtitleIndex: subOn,
+        burned: null,
+        ...(native ? { tracks: this.nativeTracks(id, src, { direct: true, audioOn, subtitleOn: subOn, defAudio }, auth.token) } : {}),
       };
     }
     if (!src.TranscodingUrl) {
       throw new SourceError("This TV can't play that file as it is, and the server won't transcode it for this user (turn on transcoding for the Jellyfin user).", 409, "refused");
     }
-    // No subtitle chosen: the server's own pick isn't burned in. One chosen: it is.
-    let path = subtitleIndex == null ? withoutBurnedSubtitles(src.TranscodingUrl) : src.TranscodingUrl;
+    // Nothing to burn in: the server's own subtitle pick isn't burned in either.
+    let path = burn ? src.TranscodingUrl : withoutBurnedSubtitles(src.TranscodingUrl);
     const urlQ = new URLSearchParams(path.split("?", 2)[1] ?? "");
     const usedAudio = Number(urlQ.get("AudioStreamIndex") ?? NaN);
-    const burned = subtitleIndex != null && urlQ.get("SubtitleStreamIndex") === String(subtitleIndex) ? subtitleIndex : null;
-    if (subtitleIndex != null && burned == null) log.warn("jellyfin", "the server didn't take the subtitle", { item: id, subtitle: subtitleIndex });
+    const burned = burn && urlQ.get("SubtitleStreamIndex") === String(subtitleIndex) ? subtitleIndex : null;
+    if (burn && burned == null) log.warn("jellyfin", "the server didn't take the subtitle", { item: id, subtitle: subtitleIndex });
     if (!/[?&](api_key|ApiKey)=/i.test(path)) path += `${path.includes("?") ? "&" : "?"}api_key=${encodeURIComponent(auth.token)}`;
     const serverReasons = transcodeReasons(src, path).filter((r) => r !== "DirectPlayError");
     const picked = [...(audioIndex != null ? ["another audio track"] : []), ...(burned != null ? ["subtitles burned in"] : [])];
+    const audioOn = Number.isFinite(usedAudio) ? usedAudio : defAudio;
+    // Native: a text subtitle is a side file on top of the converted picture.
+    const subOn = burned ?? (native && sub && sub.IsTextSubtitleStream === true ? subtitleIndex : null);
     return {
       url: serverPath(base, path),
       mime: HLS_MIME,
       directPlay: false,
       ...(startAt ? { startAt } : {}),
-      reasons: [...picked, ...(ours.ok ? serverReasons : ours.reasons)],
+      reasons: [...new Set([...picked, ...(ours.ok ? serverReasons : ours.reasons)])],
       session: { itemId: id, mediaSourceId: src.Id, playSessionId: ps, method: "transcode" },
-      ...(Number.isFinite(usedAudio) ? { audioIndex: usedAudio } : typeof defAudio === "number" ? { audioIndex: defAudio } : {}),
-      subtitleIndex: burned,
+      ...(typeof audioOn === "number" ? { audioIndex: audioOn } : {}),
+      subtitleIndex: subOn,
+      burned,
+      ...(native ? { tracks: this.nativeTracks(id, src, { direct: false, audioOn, subtitleOn: subOn, defAudio }, auth.token) } : {}),
     };
+  }
+
+  /**
+   * Every track for a player that switches them itself. In a file sent as it is, a track's
+   * place is its order among tracks of its kind in the file (side files aren't in it). In the
+   * server's HLS there's one audio track (the one asked for) and no subtitles: text subtitles
+   * come as a WebVTT side file instead, and picture ones can't be switched to (the player
+   * answers "unsupported" and we start again with it burned in).
+   */
+  private nativeTracks(id: string, src: JSource, o: { direct: boolean; audioOn?: number; subtitleOn: number | null; defAudio?: number }, token: string): NativeTracks {
+    const streams = (src.MediaStreams ?? []).filter((m) => typeof m.Index === "number").sort((a, b) => (a.Index ?? 0) - (b.Index ?? 0));
+    const audio = streams.filter((m) => m.Type === "Audio");
+    const subs = streams.filter((m) => m.Type === "Subtitle");
+    const inFile = subs.filter((m) => m.IsExternal !== true);
+    const keep = <T extends { id: string }>(list: T[], on: (string | undefined)[]) => {
+      if (list.length <= 32) return list;
+      const must = list.filter((t) => on.includes(t.id));
+      return [...must, ...list.filter((t) => !on.includes(t.id)).slice(0, 32 - must.length)];
+    };
+    const audioId = typeof o.audioOn === "number" ? audioTrackId(o.audioOn) : undefined;
+    const subtitleId = o.subtitleOn != null ? subtitleTrackId(o.subtitleOn) : null;
+    const audioTracks: NativeTrack[] = audio.map((m, pos) =>
+      defined({
+        id: audioTrackId(m.Index!),
+        label: trackLabel(m).slice(0, 80),
+        language: m.Language || undefined,
+        index: o.direct ? pos : m.Index === o.audioOn ? 0 : undefined,
+        default: m.Index === o.defAudio ? true : undefined,
+      }),
+    );
+    const subTracks: NativeTrack[] = subs.map((m) => {
+      const text = m.IsTextSubtitleStream === true;
+      const pos = inFile.indexOf(m);
+      const index = o.direct && pos >= 0 ? pos : undefined;
+      const url = text && index == null ? this.subtitleUrl(id, src.Id, m.Index!, token) : undefined;
+      return defined({
+        id: subtitleTrackId(m.Index!),
+        label: trackLabel(m).slice(0, 80),
+        language: m.Language || undefined,
+        index,
+        url,
+        format: url ? "vtt" : undefined,
+        forced: m.IsForced ? true : undefined,
+      });
+    });
+    return { audio: keep(audioTracks, [audioId]), subtitles: keep(subTracks, [subtitleId ?? undefined]), ...(audioId ? { audioId } : {}), subtitleId };
+  }
+
+  /** A text subtitle as WebVTT, for a player to load beside the video. Carries the key. */
+  private subtitleUrl(id: string, mediaSourceId: string, index: number, token: string): string {
+    return serverPath(this.base(), `/Videos/${encodeURIComponent(id)}/${encodeURIComponent(mediaSourceId)}/Subtitles/${index}/0/Stream.vtt?${new URLSearchParams({ api_key: token })}`);
   }
 
   tvPosterUrl(id: string): string | undefined {

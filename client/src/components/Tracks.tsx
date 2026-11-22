@@ -1,7 +1,8 @@
 // Audio track and subtitles: picked before a movie starts (the details sheet) and changed while
-// it plays (the dock). The TVs' own players can't switch tracks, so anything but the file's
-// default audio and no subtitles goes through the server: another audio track is repackaged
-// (the picture untouched), and subtitles are burned into the picture.
+// it plays (the dock). An Apple TV's or a Roku's player can't switch tracks, so there anything
+// but the file's default audio and no subtitles goes through the server: another audio track
+// is repackaged (the picture untouched), and subtitles are burned into the picture. A player
+// that switches tracks itself (a Venuebox app, a screen on the box) does it with no new stream.
 
 import type { Track, TrackChoice, Tracks } from "@movies/shared";
 
@@ -36,8 +37,16 @@ export function trackWords(t: Tracks | undefined, audio?: number, sub?: number |
   return parts.join(" · ");
 }
 
-export function TrackPicker({ tracks, value, onChange, is4k, disabled }: { tracks: Tracks; value: Picked; onChange: (p: Picked) => void; is4k?: boolean; disabled?: boolean }) {
+/**
+ * native: the TV's player switches tracks itself. direct: the file goes to it as it is (only
+ * known before play; in the dock, what's playing decides).
+ */
+export function TrackPicker({ tracks, value, onChange, is4k, disabled, native, direct }: { tracks: Tracks; value: Picked; onChange: (p: Picked) => void; is4k?: boolean; disabled?: boolean; native?: boolean; direct?: boolean }) {
   const otherAudio = value.audio != null && value.audio !== tracks.defaultAudio;
+  const sub = value.sub != null ? tracks.subtitles.find((s) => s.index === value.sub) : undefined;
+  // A native player shows text subtitles from a side file, and picture ones inside a file it
+  // plays as it is; only a picture subtitle on a converted stream is burned in.
+  const burns = !!sub && (!native || (!sub.text && (direct === false || sub.external === true)));
   return (
     <div className="tracks">
       <div className="tracks-row">
@@ -65,8 +74,10 @@ export function TrackPicker({ tracks, value, onChange, is4k, disabled }: { track
           </select>
         </label>
       </div>
-      {otherAudio && value.sub == null && <p className="tracks-note">Another audio track: the server repackages the movie with it. The picture isn't changed.</p>}
-      {value.sub != null && (
+      {otherAudio && native && direct !== false && !burns && <p className="tracks-note">This TV switches to it by itself: no extra work for the server.</p>}
+      {otherAudio && (!native || direct === false) && !burns && <p className="tracks-note">Another audio track: the server repackages the movie with it. The picture isn't changed.</p>}
+      {sub && !burns && <p className="tracks-note">This TV shows these subtitles by itself: no extra work for the server.</p>}
+      {burns && (
         <p className="tracks-note warn">
           Subtitles are burned into the picture: the server converts the whole picture, which is the heaviest work it does, and the quality drops slightly.
           {is4k ? " A 4K movie may be more than the server can keep up with: if it stutters, turn subtitles off." : ""}

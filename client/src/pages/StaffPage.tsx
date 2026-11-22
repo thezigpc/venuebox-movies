@@ -86,8 +86,8 @@ function Dock({ tvs, selected, onSelect, notify }: { tvs: TvInfo[]; selected: st
     if (!tv || !n?.tracks) return;
     setBusy(true);
     try {
-      await api.tracks(tv.displayId, toChoice(n.tracks, picked));
-      notify(tv.canSeek ? `Switching on ${tv.name}: it picks up where it was.` : `Switching on ${tv.name}: it starts again from the beginning.`);
+      const r = await api.tracks(tv.displayId, toChoice(n.tracks, picked));
+      notify(r.inPlace ? `Switched on ${tv.name}.` : tv.canSeek ? `Switching on ${tv.name}: it picks up where it was.` : `Switching on ${tv.name}: it starts again from the beginning.`);
       setTracksOpen(false);
     } catch (err) {
       notify(err instanceof Error ? err.message : "That didn't change.", true);
@@ -170,11 +170,11 @@ function Dock({ tvs, selected, onSelect, notify }: { tvs: TvInfo[]; selected: st
               </div>
               {tracksOpen && hasChoices(n.tracks) && (
                 <div className="dock-tracks">
-                  <TrackPicker tracks={n.tracks} value={picked} onChange={setPicked} disabled={busy} />
+                  <TrackPicker tracks={n.tracks} value={picked} onChange={setPicked} disabled={busy} native={tv.tracksNative} direct={n.method === "direct"} />
                   {!tv.canSeek && <p className="tracks-note">{tv.name} can't start part-way: changing these starts the movie again from the beginning.</p>}
                   <div className="dock-tracks-actions">
                     <button className="primary" disabled={busy || unchanged} onClick={() => void applyTracks()}>
-                      {tv.canSeek ? `Switch (picks up at ${clock(n.positionSec)})` : "Switch (starts over)"}
+                      {tv.tracksNative ? "Switch" : tv.canSeek ? `Switch (picks up at ${clock(n.positionSec)})` : "Switch (starts over)"}
                     </button>
                     <button disabled={busy} onClick={() => setTracksOpen(false)}>
                       Cancel
@@ -252,10 +252,10 @@ function Details({ id, tvs, tv, onTv, onOpen, onClose, notify }: { id: string; t
                       </button>
                     ))}
                   </div>
-                  {fit && plain && <p className={`fit ${fit.direct ? "ok" : ""}`}>{fit.direct ? "Plays as it is: full quality, original sound." : `The server converts it for this TV (${fit.reasons.join(", ")}).`}</p>}
+                  {fit && (plain || (target?.tracksNative && fit.direct)) && <p className={`fit ${fit.direct ? "ok" : ""}`}>{fit.direct ? "Plays as it is: full quality, original sound." : `The server converts it for this TV (${fit.reasons.join(", ")}).`}</p>}
                 </div>
               )}
-              {tracks && target && <TrackPicker tracks={tracks} value={picked} onChange={setPicked} is4k={(item.file?.video?.height ?? 0) > 1100} disabled={busy} />}
+              {tracks && target && <TrackPicker tracks={tracks} value={picked} onChange={setPicked} is4k={(item.file?.video?.height ?? 0) > 1100} disabled={busy} native={target.tracksNative} {...(fit ? { direct: fit.direct } : {})} />}
               {item.playable && target && (
                 <div className="actions">
                   {item.resumeSec && !container && target.canSeek ? (

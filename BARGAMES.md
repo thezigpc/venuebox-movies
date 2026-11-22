@@ -1,12 +1,13 @@
-# Bar Games integration report: Movies 0.3.0
+# Bar Games integration report: Movies 0.4.0
 
 - **Level:** 3, an app and a media provider.
-- **SDK:** 0.18.2.
+- **SDK:** 0.19.0.
   - Box 0.27.0: `bg.playVideo` / `videoControl` / `videoStatus`, `bg.tvs()[].video`, and
     the standard `video_started` / `video_stopped` events.
   - Box 0.28.0: Venuebox apps, `video: { kind: "venuebox", model, formats }`.
   - Box 0.28.1: `formats.ranges`.
   - Box 0.28.2: `kind: "local"`, a screen on the box. Formats are used whatever the kind.
+  - Box 0.29.0: `playVideo.tracks`, `videoControl({audio}|{subtitle})`, `videoStatus.audio/subtitle/remote`.
 - **GameKit:** 0.10.6.
 - **Manifest:**
   - `id: movies`, port 3017, `routing.basePath: true`, `network.internet: true`;
@@ -111,6 +112,17 @@ The brief named them `movie_started` / `movie_stopped`. GameBroker asked for the
   - commentary audio: fMP4 segment;
   - French PGS burned in: fMP4 segment;
   - a switch on the Roku to commentary + English burned in: TS segment.
+
+## Players that switch tracks (0.4.0, SDK 0.19.0)
+
+Verified on the 0.19.0 mock box (fake-den) against the real Jellyfin:
+- "2 Fast 2 Furious" with the commentary track and English PGS played as it is (it used to be
+  a full conversion with burn-in).
+- Back to the default audio with subtitles off: switched on the player, no new stream.
+- From the remote: "next" on a single movie is ignored (logged); a subtitle was switched on the
+  player.
+- A text subtitle ("+1", English SDH SRT) as a side file: HTTP 200, text/vtt, 1708 cues.
+- No token, address, key, link or side-file link in any log.
 
 ## Known limits
 

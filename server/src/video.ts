@@ -6,12 +6,12 @@
 //
 // A stream link carries the media server's key: it's passed to the box and to nothing else.
 
-import type { BarGames, VideoAction, VideoRequest, VideoResult, VideoStatus } from "@bargames/sdk/server";
+import type { BarGames, VideoAction, VideoRemote, VideoRequest, VideoResult, VideoStatus } from "@bargames/sdk/server";
 import type { TvFormats, VideoProblem } from "@movies/shared";
 import type { Http } from "./http.js";
 import { log } from "./log.js";
 
-export type { VideoAction, VideoResult, VideoStatus };
+export type { VideoAction, VideoRemote, VideoResult, VideoStatus };
 export type PlayVideoArgs = VideoRequest;
 
 export interface VideoTv {
@@ -43,6 +43,7 @@ function readFormats(f: unknown): TvFormats | undefined {
   const containers = list(o.containers), video = list(o.video), audio = list(o.audio);
   if (!containers || !video || !audio) return undefined;
   const passthrough = list(o.passthrough), ranges = list(o.ranges);
+  const tracks = o.tracks === true;
   return {
     containers,
     video,
@@ -51,6 +52,7 @@ function readFormats(f: unknown): TvFormats | undefined {
     seek: o.seek === true,
     ...(passthrough ? { passthrough } : {}),
     ...(ranges ? { ranges } : {}),
+    ...(tracks ? { tracks } : {}),
   };
 }
 
@@ -108,6 +110,9 @@ interface FakeState {
   since: number;
   title: string;
   message?: string;
+  tracks?: VideoRequest["tracks"];
+  audio?: string;
+  subtitle?: string | null;
 }
 
 /**
@@ -116,7 +121,7 @@ interface FakeState {
  * its first segment. So a test on the dev box proves the server hands out a link that works,
  * without any TV. It never logs the link.
  */
-export function createFakeVideo(opts: { http: Http; now?: () => number; probe?: boolean }): VideoOut & { probes: Map<string, string> } {
+export function createFakeVideo(opts: { http: Http; now?: () => number; probe?: boolean }): VideoOut & { probes: Map<string, string>; remote(displayId: string, action: VideoRemote): void } {
   const now = opts.now ?? Date.now;
   const tvs: VideoTv[] = [
     { id: "fake-appletv", name: "Fake Apple TV 4K", kind: "appletv", model: "AppleTV4KGen3", online: true },
@@ -127,12 +132,13 @@ export function createFakeVideo(opts: { http: Http; now?: () => number; probe?: 
       kind: "venuebox",
       model: "Android TV 4K",
       online: true,
-      formats: { containers: ["mp4", "mkv", "webm", "hls"], video: ["h264", "hevc", "vp9", "av1"], audio: ["aac", "ac3", "eac3", "opus", "flac", "mp3"], maxHeight: 2160, seek: true, passthrough: ["ac3", "eac3"], ranges: ["sdr", "hdr10", "hlg"] },
+      formats: { containers: ["mp4", "mkv", "webm", "hls"], video: ["h264", "hevc", "vp9", "av1"], audio: ["aac", "ac3", "eac3", "opus", "flac", "mp3"], maxHeight: 2160, seek: true, passthrough: ["ac3", "eac3"], ranges: ["sdr", "hdr10", "hlg"], tracks: true },
     },
     { id: "fake-other", name: "Fake other TV", kind: "chromecast", online: true },
   ];
   const states = new Map<string, FakeState>();
   const probes = new Map<string, string>();
+  const remotes = new Map<string, VideoRemote[]>();
 
   const position = (s: FakeState) => (s.state === "playing" ? s.position + (now() - s.since) / 1000 : s.position);
 
@@ -159,11 +165,22 @@ export function createFakeVideo(opts: { http: Http; now?: () => number; probe?: 
   return {
     fake: true,
     probes,
+    /** As if someone used the TV's own remote for something only the app can do. */
+    remote(displayId, action) {
+      remotes.set(displayId, [...(remotes.get(displayId) ?? []), action]);
+    },
     problem: () => null,
     tvs: async () => tvs,
     async play(displayId, a) {
       if (!tvs.some((t) => t.id === displayId)) return { ok: false, reason: "unknown", message: "No such TV." };
-      states.set(displayId, { state: "playing", position: a.startAt ?? 0, since: now(), title: a.title });
+      const native = tvs.find((t) => t.id === displayId)?.formats?.tracks === true;
+      states.set(displayId, {
+        state: "playing",
+        position: a.startAt ?? 0,
+        since: now(),
+        title: a.title,
+        ...(native && a.tracks ? { tracks: a.tracks, ...(a.tracks.audioId ? { audio: a.tracks.audioId } : {}), subtitle: a.tracks.subtitleId ?? null } : {}),
+      });
       if (opts.probe !== false) {
         void probe(displayId, a.url, a.mime)
           .then((r) => {
@@ -181,20 +198,42 @@ export function createFakeVideo(opts: { http: Http; now?: () => number; probe?: 
     },
     async control(displayId, action) {
       const tv = tvs.find((t) => t.id === displayId);
-      if (typeof action === "object" && tv && !canSeek(tv)) return { ok: false, reason: "unsupported", message: "This TV's player can't seek." };
       const s = states.get(displayId);
+      if (typeof action === "object" && ("audio" in action || "subtitle" in action)) {
+        // A player that takes tracks switches to one that's in its stream or a side file.
+        if (!s?.tracks) return { ok: false, reason: "unsupported", message: "This TV's player can't switch tracks." };
+        if ("audio" in action) {
+          const t = s.tracks.audio?.find((x) => x.id === action.audio);
+          if (!t || t.index == null) return { ok: false, reason: "unsupported", message: "That audio track isn't in this stream." };
+          states.set(displayId, { ...s, audio: action.audio });
+        } else {
+          const t = action.subtitle == null ? null : s.tracks.subtitles?.find((x) => x.id === action.subtitle);
+          if (action.subtitle != null && (!t || (t.index == null && !t.url))) return { ok: false, reason: "unsupported", message: "Those subtitles aren't in this stream." };
+          states.set(displayId, { ...s, subtitle: action.subtitle });
+        }
+        return { ok: true };
+      }
+      if (typeof action === "object" && tv && !canSeek(tv)) return { ok: false, reason: "unsupported", message: "This TV's player can't seek." };
       if (!s || s.state === "stopped") return { ok: false, message: "Nothing is playing there." };
       const pos = position(s);
       if (action === "pause") states.set(displayId, { ...s, state: "paused", position: pos, since: now() });
       else if (action === "resume") states.set(displayId, { ...s, state: "playing", position: pos, since: now() });
       else if (action === "stop") states.set(displayId, { ...s, state: "stopped", position: pos, since: now() });
-      else states.set(displayId, { ...s, position: Math.max(0, action.seek), since: now() });
+      else if ("seek" in action) states.set(displayId, { ...s, position: Math.max(0, action.seek), since: now() });
       return { ok: true };
     },
     async status(displayId) {
       const s = states.get(displayId);
       if (!s) return { state: "stopped" };
-      return { state: s.state, position: Math.round(position(s)), ...(s.message ? { message: s.message } : {}) };
+      const remote = remotes.get(displayId);
+      remotes.delete(displayId);
+      return {
+        state: s.state,
+        position: Math.round(position(s)),
+        ...(s.message ? { message: s.message } : {}),
+        ...(s.tracks ? { ...(s.audio ? { audio: s.audio } : {}), subtitle: s.subtitle ?? null } : {}),
+        ...(remote?.length ? { remote } : {}),
+      };
     },
   };
 }

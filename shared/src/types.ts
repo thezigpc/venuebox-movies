@@ -134,6 +134,8 @@ export interface TvInfo {
   allow4k: boolean;
   /** Skip ±30 s and resume points work (not on a Roku, nor a Venuebox app that can't seek). */
   canSeek: boolean;
+  /** Its player switches audio and subtitles itself (SDK 0.19.0): no new stream needed. */
+  tracksNative: boolean;
   now: NowPlaying | null;
 }
 

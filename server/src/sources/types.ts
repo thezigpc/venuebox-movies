@@ -15,6 +15,34 @@ export class SourceError extends Error {
   }
 }
 
+/** One track for a player that switches tracks itself (the SDK's VideoTrack). */
+export interface NativeTrack {
+  id: string;
+  label: string;
+  language?: string;
+  /** Its place inside the stream sent, 0-based among tracks of its kind. Absent: not in it. */
+  index?: number;
+  /** A side file the player loads (subtitles). Carries the server's key: never log it. */
+  url?: string;
+  format?: string;
+  forced?: boolean;
+  default?: boolean;
+}
+
+/** The SDK's VideoTracks: every track, and the ones on at the start. */
+export interface NativeTracks {
+  audio: NativeTrack[];
+  subtitles: NativeTrack[];
+  audioId?: string;
+  subtitleId: string | null;
+}
+
+export interface PlaybackOptions extends TrackChoice {
+  startAt?: number;
+  /** The TV's player switches tracks itself (formats.tracks): list them instead of converting. */
+  native?: boolean;
+}
+
 export interface Playback {
   /** The link the TV opens. Carries the server's key: never log it, never put it in an event. */
   url: string;
@@ -29,8 +57,12 @@ export interface Playback {
   session: PlaySession;
   /** The audio track it plays (a stream index), when the server says. */
   audioIndex?: number;
-  /** The subtitle burned into the picture, or null for none. */
+  /** The subtitle on: burned into the picture, or (native) shown by the player. null: none. */
   subtitleIndex: number | null;
+  /** The subtitle burned into the picture, if any. */
+  burned: number | null;
+  /** For a native player: every track, with where it is in this stream. */
+  tracks?: NativeTracks;
 }
 
 export interface PlaySession {
@@ -67,7 +99,7 @@ export interface MediaSource {
    * default) or subtitle makes it the server's HLS: the audio is repackaged (the picture is
    * copied); a subtitle is burned into the picture (the whole picture is converted).
    */
-  playback(id: string, tv: TvProfile, opts?: { startAt?: number } & TrackChoice): Promise<Playback>;
+  playback(id: string, tv: TvProfile, opts?: PlaybackOptions): Promise<Playback>;
   /** The TV's poster image, as a link the TV can open (no key in it). */
   tvPosterUrl(id: string): string | undefined;
   /** A poster for the staff page, fetched by us (the page never talks to the server). */

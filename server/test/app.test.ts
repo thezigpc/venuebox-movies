@@ -477,6 +477,132 @@ describe("playing", () => {
     assert.match(last().url, /\/videos\/e3\/.*AudioStreamIndex=5.*SubtitleStreamIndex=6/, "same languages, e3's own indexes");
   });
 
+  // ---- players that switch tracks themselves (SDK 0.19.0)
+  const addNative = (containers = ["mp4", "mkv", "hls"]) =>
+    t.tvs.list.push({ id: "den", name: "Den TV", kind: "venuebox", model: "Android TV", online: true, formats: { containers, video: ["h264", "hevc"], audio: ["aac", "ac3", "eac3"], maxHeight: 2160, seek: true, ranges: ["sdr", "hdr10"], tracks: true } });
+
+  test("native player: the file as it is with every track listed, the choice on at the start", async () => {
+    addNative();
+    const r = await play("den", "m2", { audioIndex: 2, subtitleIndex: 3 });
+    assert.equal(r.body.value.method, "direct", "no repackaging, no burning in");
+    assert.deepEqual(r.body.value.reasons, []);
+    const tr = last().tracks!;
+    assert.deepEqual(tr.audio!.map((a) => [a.id, a.index, a.default ?? false, a.label]), [
+      ["a1", 0, true, "Dolby Digital 5.1 - English"],
+      ["a2", 1, false, "French - AAC - Stereo"],
+    ]);
+    assert.deepEqual(tr.subtitles!.map((s) => [s.id, s.index ?? null, !!s.url, s.format ?? null]), [
+      ["s3", 0, false, null],
+      ["s4", null, true, "vtt"],
+    ], "the PGS inside the file by its place; the separate SRT as a WebVTT side file");
+    assert.match(tr.subtitles![1]!.url!, /\/jellyfin\/Videos\/m2\/m2\/Subtitles\/4\/0\/Stream\.vtt\?api_key=/);
+    assert.equal(tr.audioId, "a2");
+    assert.equal(tr.subtitleId, "s3");
+    const now = (await state()).tvs.find((x) => x.displayId === "den")!.now!;
+    assert.equal(now.audioIndex, 2);
+    assert.equal(now.subtitleIndex, 3);
+  });
+
+  test("native player: switching happens on the TV, with no new stream", async () => {
+    addNative();
+    await play("den", "m2");
+    const plays = t.tvs.plays.length;
+    const r = await t.api<{ value: { audioIndex: number; subtitleIndex: number | null }; inPlace: boolean }>("POST", "/api/admin/tvs/den/tracks", { audioIndex: 2, subtitleIndex: 4 });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.inPlace, true);
+    assert.equal(t.tvs.plays.length, plays, "no new stream");
+    assert.deepEqual(t.tvs.controls.map((c) => c.action), [{ audio: "a2" }, { subtitle: "s4" }]);
+    assert.equal(r.body.value.audioIndex, 2);
+    assert.equal(r.body.value.subtitleIndex, 4);
+    // Off again: still on the TV.
+    await t.api("POST", "/api/admin/tvs/den/tracks", { audioIndex: 2, subtitleIndex: null });
+    assert.deepEqual(t.tvs.controls.at(-1)!.action, { subtitle: null });
+    assert.equal(t.tvs.plays.length, plays);
+  });
+
+  test("native player on a converted stream: text subtitles as a side file, picture ones burned in", async () => {
+    addNative(["mp4", "hls"]); // can't open an MKV: the server converts it
+    let r = await play("den", "m2", { subtitleIndex: 4 });
+    assert.equal(r.body.value.method, "transcode");
+    assert.doesNotMatch(last().url, /SubtitleStreamIndex/, "the SRT isn't burned in");
+    assert.ok(last().tracks!.subtitles!.find((s) => s.id === "s4")!.url);
+    assert.equal(last().tracks!.subtitleId, "s4");
+    assert.equal(last().tracks!.audio!.find((a) => a.id === "a1")!.index, 0, "the one audio track in the stream");
+    assert.equal(last().tracks!.audio!.find((a) => a.id === "a2")!.index, undefined);
+    r = await play("den", "m2", { subtitleIndex: 3 });
+    assert.match(last().url, /SubtitleStreamIndex=3/, "the PGS is burned in");
+    assert.ok(r.body.value.reasons.includes("subtitles burned in"));
+    // From the burned-in PGS to the SRT: only a new stream takes the PGS away.
+    const plays = t.tvs.plays.length;
+    const sw = await t.api<{ inPlace: boolean }>("POST", "/api/admin/tvs/den/tracks", { subtitleIndex: 4 });
+    assert.equal(sw.body.inPlace, false);
+    assert.equal(t.tvs.plays.length, plays + 1);
+    assert.doesNotMatch(last().url, /SubtitleStreamIndex/);
+    // Audio not in the converted stream: the player can't, so a new stream with it.
+    const a = await t.api<{ inPlace: boolean }>("POST", "/api/admin/tvs/den/tracks", { audioIndex: 2, subtitleIndex: 4 });
+    assert.equal(a.body.inPlace, false);
+    assert.match(last().url, /AudioStreamIndex=2/);
+  });
+
+  test("native player: a change made on the TV is followed, and kept for the next episode", async () => {
+    addNative();
+    await play("den", "s1"); // e2
+    t.tvs.statuses.set("den", { state: "playing", position: 60, audio: "a1", subtitle: null });
+    await t.app.player.tick();
+    t.tvs.statuses.set("den", { state: "playing", position: 62, audio: "a2", subtitle: "s3" });
+    await t.app.player.tick();
+    const now = (await state()).tvs.find((x) => x.displayId === "den")!.now!;
+    assert.equal(now.audioIndex, 2);
+    assert.equal(now.subtitleIndex, 3);
+    // e2 ends: e3 starts with French audio and French subtitles, by e3's own indexes.
+    t.tvs.statuses.set("den", { state: "playing", position: 1790, duration: 1800 });
+    await t.app.player.tick();
+    t.tvs.statuses.set("den", { state: "stopped" });
+    await t.app.player.tick();
+    assert.match(last().url, /\/Videos\/e3\/stream/);
+    assert.equal(last().tracks!.audioId, "a5");
+    assert.equal(last().tracks!.subtitleId, "s6");
+  });
+
+  test("the TV's remote: next and previous through a series", async () => {
+    addNative();
+    await play("den", "s1"); // e2
+    t.tvs.statuses.set("den", { state: "playing", position: 100, remote: ["next"] });
+    await t.app.player.tick();
+    assert.match(last().url, /\/Videos\/e3\/stream/);
+    assert.equal(last().startAt, undefined, "from the beginning");
+    t.tvs.statuses.set("den", { state: "playing", position: 3, remote: ["previous"] });
+    await t.app.player.tick();
+    assert.match(last().url, /\/Videos\/e2\/stream/, "near the start: the one before");
+    t.tvs.statuses.set("den", { state: "playing", position: 300, remote: ["previous"] });
+    await t.app.player.tick();
+    assert.match(last().url, /\/Videos\/e2\/stream/, "part-way in: this one from the start");
+    const plays = t.tvs.plays.length;
+    t.tvs.statuses.set("den", { state: "playing", position: 5, remote: ["previous"] });
+    await t.app.player.tick();
+    t.tvs.statuses.set("den", { state: "playing", position: 5 });
+    // e2 is the first in this queue: "previous" plays it from the start again, nothing before it.
+    assert.equal(t.tvs.plays.length, plays + 1);
+  });
+
+  test("the TV's remote: a track the player couldn't switch to starts a new stream with it", async () => {
+    addNative(["mp4", "hls"]);
+    await play("den", "m2");
+    const plays = t.tvs.plays.length;
+    t.tvs.statuses.set("den", { state: "playing", position: 400, audio: "a1", subtitle: null, remote: [{ audio: "a2" }] });
+    await t.app.player.tick();
+    assert.equal(t.tvs.plays.length, plays + 1);
+    assert.match(last().url, /AudioStreamIndex=2/);
+    assert.equal(last().startAt, 397);
+    assert.equal((await state()).tvs.find((x) => x.displayId === "den")!.now!.audioIndex, 2);
+  });
+
+  test("stream links and subtitle side files stay out of the log", async () => {
+    addNative(["mp4", "hls"]);
+    await play("den", "m2", { subtitleIndex: 4 });
+    assert.ok(!t.logs.some((l) => l.includes(TOKEN) || /Stream\.vtt/.test(l)));
+  });
+
   test("the box asks for Apple TV video pairing: staff are told how", async () => {
     t.tvs.playAnswer = { ok: false, reason: "needs-pairing" };
     const r = await play("atv", "m2");

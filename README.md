@@ -76,6 +76,10 @@ dock while it plays.
 - Another audio track has the server repackage the movie with it; the picture isn't changed.
 - Subtitles are burned into the picture, a full conversion: the heaviest work the server does.
 - With the default audio and no subtitles, nothing is converted that doesn't need to be.
+- On a TV whose player switches tracks itself (a Venuebox app, a screen on the box, box
+  0.29.0), the movie plays as it is whatever is chosen, text subtitles come as a side file,
+  and switching is instant. The TV's own remote can change them, and skip to the next or
+  previous episode.
 
 Start, progress and stop are reported to Jellyfin, so its resume points stay right.
 
