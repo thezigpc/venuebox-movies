@@ -115,20 +115,20 @@ export class Player {
 
   profileOf(tv: VideoTv): { id: TvProfileId; auto: boolean } {
     const set = this.o.store.tv(tv.id).profile;
-    return set ? { id: set, auto: false } : { id: profileFor({ kind: tv.kind, model: tv.model }), auto: true };
+    return set ? { id: set, auto: false } : { id: profileFor({ kind: tv.kind, model: tv.model, formats: tv.formats }), auto: true };
   }
 
   /** The profile a play asks the server for: the TV's type (or a Venuebox app's own formats) with its settings. */
   profile(tv: VideoTv): TvProfile {
     const st = this.o.store.tv(tv.id);
-    return effectiveProfile(this.profileOf(tv).id, { capMbps: st.capMbps, allow4k: st.allow4k }, tv.formats);
+    return effectiveProfile(this.profileOf(tv).id, { capMbps: st.capMbps, allow4k: st.allow4k }, tv.formats, tv.kind);
   }
 
   info(tv: VideoTv): TvInfo {
     const st = this.o.store.tv(tv.id);
     const p = this.profileOf(tv);
     // The TV's own maximum (no cap), for the settings page.
-    const top = effectiveProfile(p.id, {}, tv.formats);
+    const top = effectiveProfile(p.id, {}, tv.formats, tv.kind);
     return {
       displayId: tv.id,
       name: tv.name,

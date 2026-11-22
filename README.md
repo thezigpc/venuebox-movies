@@ -8,7 +8,8 @@ server in its own player, so the box never carries the video:
 - **Apple TV:** AirPlay "play this URL", in full 4K/HDR with the original sound;
 - **Roku:** Roku's built-in player;
 - **Venuebox app** (Android/Google TV, a PC): its own player, which tells the box what it
-  plays (box 0.28.0 or newer).
+  plays (box 0.28.0 or newer);
+- **A screen plugged into the box:** played by the box itself (box 0.28.2 or newer).
 
 ```
 iPad (staff) → Movies app: "play Movie X on TV 3"
@@ -59,7 +60,7 @@ which remuxes when the codecs fit and transcodes when they don't.
 | Apple TV 4K | up to 2160p, HEVC/H.264, HDR10/Dolby Vision, MP4/MOV (an MKV is remuxed to HLS), AAC/AC3/EAC3 |
 | Roku Express (3930) | 1080p H.264, MP4/MKV, AAC/AC3 (passthrough) |
 | Roku Streaming Stick (3800) | the same, plus HEVC |
-| Venuebox app | whatever its player lists (containers, codecs, height). Otherwise HLS in HEVC if it lists it, else H.264 |
+| Venuebox app, screen on the box | whatever its player lists (containers, codecs, height). Otherwise HLS in HEVC if it lists it, else H.264 |
 | Other | always 1080p H.264 HLS with stereo AAC |
 
 The bitrate asked for is the TV's maximum, lowered by the per-TV cap.

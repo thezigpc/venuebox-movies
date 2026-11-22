@@ -340,6 +340,19 @@ describe("playing", () => {
     assert.equal(typeof (t.tvs.controls.at(-1)!.action as { seek: number }).seek, "number");
   });
 
+  test("a screen on the box (kind local): its formats decide, seek works", async () => {
+    t.tvs.list.push({ id: "hdmi", name: "Back bar screen", kind: "local", model: "HDMI-1", online: true, formats: { containers: ["mp4", "mkv", "hls"], video: ["h264"], audio: ["aac", "ac3"], maxHeight: 1080, seek: true, ranges: ["sdr"] } });
+    assert.equal((await play("hdmi", "m2")).body.value.method, "direct", "H.264 MKV plays as it is");
+    assert.equal((await play("hdmi", "m1")).body.value.method, "transcode", "4K HDR HEVC is converted");
+    assert.match(last().url, /SegmentContainer=ts/);
+    assert.equal(lastPlaybackInfo().MaxStreamingBitrate, 40_000_000);
+    const tv = (await state()).tvs.find((x) => x.displayId === "hdmi")!;
+    assert.equal(tv.profile, "venuebox");
+    assert.equal(tv.profileLabel, "Screen on the box");
+    assert.equal(tv.canSeek, true);
+    assert.equal(tv.maxHeight, 1080);
+  });
+
   test("Venuebox app that can't seek: no resume point, no skipping", async () => {
     addDen(false);
     await play("den", "m1");

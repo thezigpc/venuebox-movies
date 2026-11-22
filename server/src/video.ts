@@ -21,16 +21,19 @@ export interface VideoTv {
   kind: string;
   model?: string;
   online: boolean;
-  /** A Venuebox app's player: what it plays as it is (absent for Apple TVs and Rokus). */
+  /** What its player plays as it is: Venuebox apps and box screens (absent for Apple TVs and Rokus). */
   formats?: TvFormats;
 }
 
 /**
- * Skip and resume points: an Apple TV does both; a Roku's built-in player can't seek or start
- * part-way; a Venuebox app says so in its formats (seek: true).
+ * Skip and resume points. A TV that reports formats says so itself (seek: true), whatever its
+ * kind. Otherwise: a Roku's built-in player can't seek or start part-way; a Venuebox app or a
+ * box screen that reports nothing is taken as no; an Apple TV (and anything else) does both.
  */
-export const canSeek = (tv: { kind: string; formats?: { seek?: boolean } }): boolean =>
-  tv.kind === "roku" ? false : tv.kind === "venuebox" ? tv.formats?.seek === true : true;
+export const canSeek = (tv: { kind: string; formats?: { seek?: boolean } }): boolean => {
+  if (tv.formats) return tv.formats.seek === true;
+  return tv.kind !== "roku" && tv.kind !== "venuebox" && tv.kind !== "local";
+};
 
 /** The box's formats, checked (a malformed one is dropped, so the TV gets the safe profile). */
 function readFormats(f: unknown): TvFormats | undefined {

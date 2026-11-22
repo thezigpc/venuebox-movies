@@ -210,6 +210,21 @@ test("venuebox: HDR only as its ranges say (SDK 0.18.1)", () => {
   assert.deepEqual(dv, { ok: true });
 });
 
+test("formats win whatever the kind (SDK 0.18.2): a screen on the box", () => {
+  const local: TvFormats = { containers: ["mp4", "mkv", "hls"], video: ["h264", "hevc"], audio: ["aac", "ac3", "eac3", "dts"], maxHeight: 2160, seek: true, ranges: ["sdr"] };
+  assert.equal(profileFor({ kind: "local", model: "HDMI-1", formats: local }), "venuebox");
+  assert.equal(profileFor({ kind: "local" }), "venuebox");
+  // Even a Roku, if the box ever sends formats for one.
+  assert.equal(profileFor({ kind: "roku", model: "3930X", formats: local }), "venuebox");
+  assert.equal(profileFor({ kind: "roku", model: "3930X" }), "roku3930");
+  const p = effectiveProfile("venuebox", {}, local, "local");
+  assert.equal(p.label, "Screen on the box");
+  assert.deepEqual(p.directContainers, ["mp4", "mkv"]);
+  assert.deepEqual(p.videoRanges, ["SDR"]);
+  assert.equal(effectiveProfile("venuebox", {}, null, "local").label, "Screen on the box");
+  assert.equal(effectiveProfile("venuebox", {}, local, "roku").label, "Its own player");
+});
+
 test("venuebox: settings apply; no formats falls back; not offered by hand", () => {
   const p = effectiveProfile("venuebox", { capMbps: 12, allow4k: false }, den);
   assert.equal(p.maxHeight, 1080);

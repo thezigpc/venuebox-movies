@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.2 (2026-11-21)
+- SDK 0.18.2 (box 0.28.2): a screen plugged into the box (`video.kind: "local"`, played
+  by mpv) plays movies.
+- Any TV that reports `formats` gets its profile from them, whatever its kind. Skip and
+  resume follow its `seek`.
+- Settings names it: "Venuebox app", "Screen on the box", or "Its own player".
+
 ## 0.2.1 (2026-11-21)
 - SDK 0.18.1 (box 0.28.1): a Venuebox app's `formats.ranges` decides HDR.
   - "sdr" "hdr10" "hdr10plus" "hlg" "dovi" map to Jellyfin's ranges.

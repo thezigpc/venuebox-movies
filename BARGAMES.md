@@ -1,11 +1,12 @@
-# Bar Games integration report: Movies 0.2.1
+# Bar Games integration report: Movies 0.2.2
 
 - **Level:** 3, an app and a media provider.
-- **SDK:** 0.18.1.
+- **SDK:** 0.18.2.
   - Box 0.27.0: `bg.playVideo` / `videoControl` / `videoStatus`, `bg.tvs()[].video`, and
     the standard `video_started` / `video_stopped` events.
   - Box 0.28.0: Venuebox apps, `video: { kind: "venuebox", model, formats }`.
   - Box 0.28.1: `formats.ranges`.
+  - Box 0.28.2: `kind: "local"`, a screen on the box. Formats are used whatever the kind.
 - **GameKit:** 0.10.6.
 - **Manifest:**
   - `id: movies`, port 3017, `routing.basePath: true`, `network.internet: true`;
@@ -36,7 +37,7 @@ On the same mock box:
     hevc"), with no subtitle burned in.
 - No token, server address, key or stream link in the app's or the mock box's log.
 
-## Venuebox apps (SDK 0.18.0)
+## TVs that report formats (Venuebox apps SDK 0.18.0; any kind, incl. local, SDK 0.18.2)
 
 `video.formats` becomes the TV's profile (`profileFromFormats`, `shared/src/profiles.ts`):
 - **Direct:** the containers it lists ("hls" aside), its video codecs, its audio plus

@@ -65,8 +65,9 @@ export const TV_PROFILES: Record<TvProfileId, TvProfile> = {
     maxAudioChannels: 6,
     maxBitrate: 20_000_000,
   },
-  // A Venuebox app (Android/Google TV, a PC) with its own player. Its real profile is built
-  // from the formats it reports (profileFromFormats); this is only for one that reports none.
+  // A TV whose player reports what it plays: a Venuebox app (Android/Google TV, a PC) or a
+  // screen plugged into the box (kind "local"). Its real profile is built from those formats
+  // (profileFromFormats); this is only for one that reports none.
   venuebox: {
     id: "venuebox",
     label: "Venuebox app",
@@ -129,7 +130,14 @@ const CODEC_ALIAS: Record<string, string> = { avc: "h264", h265: "hevc", hevc: "
  * otherwise the server's HLS in the best codec it lists (HEVC in fMP4 segments, else H.264 in
  * TS). HDR only as its ranges list it; none listed means SDR (the server tone-maps HDR files).
  */
-export function profileFromFormats(f: TvFormats): TvProfile {
+/** The profile's name for a TV that reports its formats, by what kind it is. */
+export function formatsLabel(kind?: string): string {
+  if (kind === "venuebox") return "Venuebox app";
+  if (kind === "local") return "Screen on the box";
+  return "Its own player";
+}
+
+export function profileFromFormats(f: TvFormats, kind = "venuebox"): TvProfile {
   const video = [...new Set(lower(f.video).map((c) => CODEC_ALIAS[c] ?? c))];
   const audio = [...new Set([...lower(f.audio), ...lower(f.passthrough)])];
   const containers = lower(f.containers).filter((c) => c !== "hls" && c !== "m3u8");
@@ -138,7 +146,7 @@ export function profileFromFormats(f: TvFormats): TvProfile {
   const ranges = [...new Set(["SDR", ...lower(f.ranges).flatMap((r) => (RANGE_NAMES[r] ? [RANGE_NAMES[r]] : []))])];
   return {
     id: "venuebox",
-    label: "Venuebox app",
+    label: formatsLabel(kind),
     maxWidth: Math.round((maxHeight * 16) / 9),
     maxHeight,
     videoCodecs: video.length ? video : ["h264"],
@@ -151,11 +159,14 @@ export function profileFromFormats(f: TvFormats): TvProfile {
   };
 }
 
-/** The profile for a box TV, from what the box says it is (bg.tvs() video.kind / model). */
-export function profileFor(video?: { kind?: string; model?: string } | null): TvProfileId {
+/**
+ * The profile for a box TV, from what the box says it is (bg.tvs() video). A TV that reports
+ * its formats gets a profile built from them, whatever its kind (SDK 0.18.2).
+ */
+export function profileFor(video?: { kind?: string; model?: string; formats?: unknown } | null): TvProfileId {
   const kind = (video?.kind ?? "").toLowerCase();
   const model = (video?.model ?? "").toLowerCase();
-  if (kind === "venuebox") return "venuebox";
+  if (video?.formats || kind === "venuebox" || kind === "local") return "venuebox";
   if (kind === "appletv" || kind === "airplay") return "appletv4k";
   if (kind === "roku") {
     if (/^3800/.test(model) || /streaming stick/.test(model)) return "roku3800";
@@ -172,9 +183,10 @@ export interface TvOptions {
   allow4k?: boolean;
 }
 
-/** The profile with this TV's settings applied. A Venuebox TV's comes from its formats. */
-export function effectiveProfile(id: TvProfileId, o: TvOptions = {}, formats?: TvFormats | null): TvProfile {
-  const p = id === "venuebox" && formats ? profileFromFormats(formats) : (TV_PROFILES[id] ?? TV_PROFILES.unknown);
+/** The profile with this TV's settings applied. One that reports formats gets its from them. */
+export function effectiveProfile(id: TvProfileId, o: TvOptions = {}, formats?: TvFormats | null, kind?: string): TvProfile {
+  const base = id === "venuebox" && formats ? profileFromFormats(formats, kind) : (TV_PROFILES[id] ?? TV_PROFILES.unknown);
+  const p = id === "venuebox" && !formats && kind ? { ...base, label: formatsLabel(kind) } : base;
   const capped = o.allow4k === false && p.maxHeight > 1080 ? { ...p, maxWidth: 1920, maxHeight: 1080 } : p;
   return { ...capped, maxBitrate: chooseBitrate(capped, o.capMbps) };
 }

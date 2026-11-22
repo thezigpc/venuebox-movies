@@ -62,7 +62,9 @@ doubletake or screen capture for movies.
 - Subtitles: none shown, none burned in. The device profile declares them as embedded, and
   `withoutBurnedSubtitles` (jellyfin.ts) removes Jellyfin's own pick from HLS links.
 - Events: standard `video_started { tv, title }` / `video_stopped { tv }`.
-- Vendored SDK 0.18.1 (Movies 0.2.1). Installed on the venue box (0.1.1). **No live testing
+- SDK 0.18.2: `kind: "local"` (a screen on the box, mpv). `formats` wins whatever the kind
+  (`profileFor`, `canSeek`).
+- Vendored SDK 0.18.2 (Movies 0.2.2). Installed on the venue box (0.1.1). **No live testing
   on the venue's TVs until the user says so.**
 
 ## Conventions
