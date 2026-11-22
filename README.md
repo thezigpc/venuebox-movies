@@ -71,7 +71,11 @@ What a pick plays:
 - a collection plays its movies in order;
 - a library plays shuffled.
 
-Subtitles aren't shown yet, and the server is never asked to burn one in.
+**Audio and subtitles:** staff pick them in a movie's details, or change them from the TV
+dock while it plays.
+- Another audio track has the server repackage the movie with it; the picture isn't changed.
+- Subtitles are burned into the picture, a full conversion: the heaviest work the server does.
+- With the default audio and no subtitles, nothing is converted that doesn't need to be.
 
 Start, progress and stop are reported to Jellyfin, so its resume points stay right.
 

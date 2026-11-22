@@ -2,7 +2,7 @@
 // (plex.ts is a stub that says so). Everything above this line (the player, the box's media
 // commands, the pages) only talks to MediaSource, never to a server's own API.
 
-import type { Card, ItemDetail, Library, Page, TestResult, TvProfile } from "@movies/shared";
+import type { Card, ItemDetail, Library, Page, TestResult, TrackChoice, TvProfile } from "@movies/shared";
 
 export class SourceError extends Error {
   constructor(
@@ -27,6 +27,10 @@ export interface Playback {
   reasons: string[];
   /** For reporting back to the server (now playing, resume points). */
   session: PlaySession;
+  /** The audio track it plays (a stream index), when the server says. */
+  audioIndex?: number;
+  /** The subtitle burned into the picture, or null for none. */
+  subtitleIndex: number | null;
 }
 
 export interface PlaySession {
@@ -58,7 +62,12 @@ export interface MediaSource {
    */
   queue(id: string): Promise<{ ids: string[]; label: string }>;
   /** A stream link for one movie or episode, for this TV. */
-  playback(id: string, tv: TvProfile, opts?: { startAt?: number }): Promise<Playback>;
+  /**
+   * A stream link for one movie or episode, for this TV. A chosen audio track (not the
+   * default) or subtitle makes it the server's HLS: the audio is repackaged (the picture is
+   * copied); a subtitle is burned into the picture (the whole picture is converted).
+   */
+  playback(id: string, tv: TvProfile, opts?: { startAt?: number } & TrackChoice): Promise<Playback>;
   /** The TV's poster image, as a link the TV can open (no key in it). */
   tvPosterUrl(id: string): string | undefined;
   /** A poster for the staff page, fetched by us (the page never talks to the server). */

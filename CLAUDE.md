@@ -59,8 +59,13 @@ doubletake or screen capture for movies.
   container; ranges absent = SDR only, SDK 0.18.1).
   The profile is built from it (`profileFromFormats` in profiles.ts); `seek` decides
   `canSeek` (video.ts). Absent for Apple TVs and Rokus.
-- Subtitles: none shown, none burned in. The device profile declares them as embedded, and
-  `withoutBurnedSubtitles` (jellyfin.ts) removes Jellyfin's own pick from HLS links.
+- Tracks (0.3.0): `TrackChoice { audioIndex?, subtitleIndex? }` (Jellyfin stream indexes).
+  - Non-default audio or a subtitle means PlaybackInfo with **MediaSourceId** (without it,
+    Jellyfin ignores the track indexes) and EnableDirectPlay false.
+  - A chosen subtitle is burned in (its URL params are kept).
+  - With none chosen, `withoutBurnedSubtitles` removes Jellyfin's own pick.
+  - `Player.setTracks` restarts at the position; `tracksFor` carries the languages along a
+    queue; `Session.busy` keeps the poller away while a stream starts.
 - Events: standard `video_started { tv, title }` / `video_stopped { tv }`.
 - SDK 0.18.2: `kind: "local"` (a screen on the box, mpv). `formats` wins whatever the kind
   (`profileFor`, `canSeek`).

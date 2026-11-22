@@ -4,7 +4,7 @@
 // so its "now playing" and resume points stay right. Emits video_started / video_stopped,
 // with the TV's name and the title only: never a link.
 
-import { effectiveProfile, profileFor, type NowPlaying, type TvInfo, type TvProfile, type TvProfileId, type TvState } from "@movies/shared";
+import { effectiveProfile, profileFor, type ItemDetail, type NowPlaying, type TrackChoice, type Tracks, type TvInfo, type TvProfile, type TvProfileId, type TvState } from "@movies/shared";
 import { log } from "./log.js";
 import type { MediaSource, PlaySession } from "./sources/types.js";
 import { SourceError } from "./sources/types.js";
@@ -37,6 +37,55 @@ interface Current {
   seen: boolean;
   lastReportAt: number;
   lastReported: string;
+  tracks?: Tracks;
+  audioIndex?: number;
+  subtitleIndex: number | null;
+}
+
+/**
+ * The tracks staff chose. On the item they were chosen for, the exact tracks; on the next ones
+ * in a queue (a series, a collection), the same languages when the file has them.
+ */
+interface TrackPrefs extends TrackChoice {
+  itemId: string;
+  /** Another audio language than the default's (absent: each file's default). */
+  audioLang?: string;
+  /** Subtitles in this language (absent: none). */
+  subtitleLang?: string;
+}
+
+/** What to ask for on this item, from the staff's choice. */
+export function tracksFor(prefs: TrackPrefs | undefined, item: Pick<ItemDetail, "id" | "tracks">): TrackChoice {
+  if (!prefs) return {};
+  if (prefs.itemId === item.id) return { ...(prefs.audioIndex != null ? { audioIndex: prefs.audioIndex } : {}), subtitleIndex: prefs.subtitleIndex ?? null };
+  const t = item.tracks;
+  const out: TrackChoice = { subtitleIndex: null };
+  if (!t) return out;
+  if (prefs.audioLang) {
+    const def = t.audio.find((a) => a.index === t.defaultAudio);
+    if (def?.language !== prefs.audioLang) {
+      const a = t.audio.find((x) => x.language === prefs.audioLang && !/commentary/i.test(x.label)) ?? t.audio.find((x) => x.language === prefs.audioLang);
+      if (a) out.audioIndex = a.index;
+    }
+  }
+  if (prefs.subtitleLang) {
+    const s = t.subtitles.find((x) => x.language === prefs.subtitleLang && !x.forced) ?? t.subtitles.find((x) => x.language === prefs.subtitleLang);
+    if (s) out.subtitleIndex = s.index;
+  }
+  return out;
+}
+
+function prefsFrom(item: Pick<ItemDetail, "id" | "tracks">, choice: TrackChoice): TrackPrefs {
+  const t = item.tracks;
+  const audio = choice.audioIndex != null && choice.audioIndex !== t?.defaultAudio ? t?.audio.find((a) => a.index === choice.audioIndex) : undefined;
+  const sub = choice.subtitleIndex != null ? t?.subtitles.find((s) => s.index === choice.subtitleIndex) : undefined;
+  return {
+    itemId: item.id,
+    ...(choice.audioIndex != null ? { audioIndex: choice.audioIndex } : {}),
+    subtitleIndex: choice.subtitleIndex ?? null,
+    ...(audio?.language ? { audioLang: audio.language } : {}),
+    ...(sub?.language ? { subtitleLang: sub.language } : {}),
+  };
 }
 
 interface Session {
@@ -48,6 +97,12 @@ interface Session {
   queue: string[];
   index: number;
   current: Current | null;
+  /** Audio and subtitles staff chose (absent: the defaults, no subtitles). */
+  prefs?: TrackPrefs;
+  /** Staff's choice before the queue's first item was looked up. */
+  firstChoice?: TrackChoice;
+  /** Starting or switching a stream: the poller leaves it alone (it has no current yet). */
+  busy?: boolean;
   /** Shown for a while after something went wrong. */
   message?: string;
   messageUntil?: number;
@@ -65,7 +120,7 @@ export interface PlayerOptions {
   startTimeoutMs?: number;
 }
 
-export interface PlayOptions {
+export interface PlayOptions extends TrackChoice {
   /** Start from the server's resume point (part-watched). Default true. */
   resume?: boolean;
 }
@@ -168,6 +223,9 @@ export class Player {
       method: c.session.method,
       ...(left > 0 ? { upNext: `${left} more from ${s.label}` } : {}),
       ...(s.message ? { message: s.message } : {}),
+      ...(c.tracks ? { tracks: c.tracks } : {}),
+      ...(c.audioIndex != null ? { audioIndex: c.audioIndex } : {}),
+      subtitleIndex: c.subtitleIndex,
     };
   }
 
@@ -198,25 +256,36 @@ export class Player {
     if (!q.ids.length) throw new PlayError("There's nothing to play in that.");
     // A new pick replaces whatever was on that TV.
     await this.end(displayId, { emit: false, stopTv: false });
-    const s: Session = { displayId, tvName: tv.name, originId: itemId, label: q.label, queue: q.ids, index: 0, current: null };
+    const choice: TrackChoice = { ...(opts.audioIndex != null ? { audioIndex: opts.audioIndex } : {}), ...(opts.subtitleIndex != null ? { subtitleIndex: opts.subtitleIndex } : {}) };
+    const s: Session = { displayId, tvName: tv.name, originId: itemId, label: q.label, queue: q.ids, index: 0, current: null, ...(Object.keys(choice).length ? { firstChoice: choice } : {}) };
     this.sessions.set(displayId, s);
+    s.busy = true;
     try {
       return await this.startCurrent(s, tv, opts.resume !== false);
     } catch (err) {
-      this.sessions.delete(displayId);
+      if (this.sessions.get(displayId) === s) this.sessions.delete(displayId);
       throw err;
+    } finally {
+      s.busy = false;
     }
   }
 
-  private async startCurrent(s: Session, tv: VideoTv, resume: boolean) {
+  private async startCurrent(s: Session, tv: VideoTv, resume: boolean, o: { at?: number; emit?: boolean } = {}) {
     const source = this.o.source();
     const id = s.queue[s.index]!;
     const item = await source.item(id);
     const profile = this.profile(tv);
+    // Staff's choice applies to the item it was made on (the first of a series: its next
+    // episode); the next ones get the same languages.
+    if (s.firstChoice) {
+      s.prefs = prefsFrom(item, s.firstChoice);
+      s.firstChoice = undefined;
+    }
+    const tracks = tracksFor(s.prefs, item);
     // A Roku's built-in player always starts from the beginning (and can't seek); so does a
     // Venuebox app that says it can't seek.
-    const startAt = resume && canSeek(tv) && item.resumeSec && item.resumeSec > 30 ? item.resumeSec : undefined;
-    const pb = await source.playback(id, profile, { startAt });
+    const startAt = !canSeek(tv) ? undefined : o.at != null ? (o.at > 5 ? o.at : undefined) : resume && item.resumeSec && item.resumeSec > 30 ? item.resumeSec : undefined;
+    const pb = await source.playback(id, profile, { startAt, ...tracks });
     const title = item.kind === "episode" && item.seriesTitle ? `${item.seriesTitle}: ${item.title}` : item.title;
     const poster = source.tvPosterUrl(id);
     const r = await this.o.video.play(tv.id, { url: pb.url, mime: pb.mime, title, ...(poster ? { poster } : {}), ...(pb.startAt ? { startAt: pb.startAt } : {}) });
@@ -236,10 +305,13 @@ export class Player {
       seen: false,
       lastReportAt: now,
       lastReported: "",
+      ...(item.tracks ? { tracks: item.tracks } : {}),
+      ...(pb.audioIndex != null ? { audioIndex: pb.audioIndex } : {}),
+      subtitleIndex: pb.subtitleIndex,
     };
-    log.info("player", "playing", { tv: tv.name, title, method: pb.session.method, why: pb.reasons.join("; ") || undefined, startAt: pb.startAt });
+    log.info("player", "playing", { tv: tv.name, title, method: pb.session.method, why: pb.reasons.join("; ") || undefined, startAt: pb.startAt, audio: pb.audioIndex, subtitle: pb.subtitleIndex ?? undefined });
     await source.reportStart(pb.session, { positionSec: pb.startAt ?? 0 }).catch((err) => log.warn("player", "report start failed", { err: String(err) }));
-    this.o.emit("video_started", { tv: tv.name, title });
+    if (o.emit !== false) this.o.emit("video_started", { tv: tv.name, title });
     return { title, method: pb.session.method, reasons: pb.reasons };
   }
 
@@ -272,6 +344,42 @@ export class Player {
     else if (a === "resume") c.state = "playing";
     else if (typeof a === "object") c.position = a.seek;
     await this.report("progress", c);
+  }
+
+  /**
+   * Another audio track or subtitle on what's playing. The TV's own player can't switch, so the
+   * stream starts again with them, at the same spot (a Roku, which can't start part-way, from
+   * the beginning). The rest of a series or collection gets the same languages.
+   */
+  async setTracks(displayId: string, choice: TrackChoice): Promise<{ restartedAt: number }> {
+    const s = this.sessions.get(displayId);
+    const c = s?.current;
+    if (!s || !c) throw new PlayError("Nothing is playing on that TV.");
+    if (s.busy) throw new PlayError("That TV is still switching: try again in a moment.");
+    const tv = (await this.tvs()).find((t) => t.id === displayId) ?? (await this.tvs(true)).find((t) => t.id === displayId);
+    if (!tv) throw new PlayError("The box doesn't know that TV any more.", 404);
+    if (choice.audioIndex != null && !c.tracks?.audio.some((a) => a.index === choice.audioIndex)) throw new PlayError("That audio track isn't in this file.", 400);
+    if (choice.subtitleIndex != null && !c.tracks?.subtitles.some((t) => t.index === choice.subtitleIndex)) throw new PlayError("Those subtitles aren't in this file.", 400);
+    const at = canSeek(tv) ? Math.max(0, Math.round(c.position) - 3) : 0;
+    const prev = s.prefs;
+    s.prefs = prefsFrom({ id: c.itemId, ...(c.tracks ? { tracks: c.tracks } : {}) }, choice);
+    // Tell the server where the old stream stopped (and end its transcode) before the new one.
+    s.busy = true;
+    await this.report("stop", c);
+    s.current = null;
+    try {
+      await this.startCurrent(s, tv, false, { at, emit: false });
+    } catch (err) {
+      // Put the old choice back and the old item on again, so the TV isn't left with nothing.
+      s.prefs = prev;
+      log.warn("player", "changing tracks failed", { tv: tv.name, err: String(err) });
+      await this.startCurrent(s, tv, false, { at, emit: false }).catch(() => undefined);
+      throw err;
+    } finally {
+      s.busy = false;
+    }
+    log.info("player", "tracks changed", { tv: tv.name, audio: choice.audioIndex, subtitle: choice.subtitleIndex ?? undefined, at });
+    return { restartedAt: at };
   }
 
   /** Ends a TV's session: tells the server where it stopped, optionally stops the TV. */
@@ -315,6 +423,7 @@ export class Player {
   }
 
   private async pollOne(s: Session): Promise<void> {
+    if (s.busy) return;
     const c = s.current;
     if (!c) {
       if ((s.messageUntil ?? 0) <= this.now()) this.sessions.delete(s.displayId);

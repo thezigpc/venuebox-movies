@@ -1,4 +1,4 @@
-# Bar Games integration report: Movies 0.2.2
+# Bar Games integration report: Movies 0.3.0
 
 - **Level:** 3, an app and a media provider.
 - **SDK:** 0.18.2.
@@ -102,6 +102,16 @@ The brief named them `movie_started` / `movie_stopped`. GameBroker asked for the
 - Jellyfin's dashboard showed the session (Transcode, position).
 - The log had no token, key or password in it.
 
+## Audio and subtitles (0.3.0, every TV)
+
+- Picked before play, changed while playing (`POST /api/admin/tvs/:id/tracks`).
+- Another audio track: HLS with the track, picture copied. Subtitles: burned in.
+- A change restarts the stream; a Roku starts over.
+- Verified against the real Jellyfin with the dev fake TVs, which fetch the streams:
+  - commentary audio: fMP4 segment;
+  - French PGS burned in: fMP4 segment;
+  - a switch on the Roku to commentary + English burned in: TS segment.
+
 ## Known limits
 
 - **One Jellyfin device.** One sign-in is one device, so Jellyfin's "now playing" shows only
@@ -109,7 +119,9 @@ The brief named them `movie_started` / `movie_stopped`. GameBroker asked for the
   right. Fix later: a token per TV.
 - **Roku:** no resume point and no ±30 s. Its built-in player starts at the beginning and
   can't seek (box 0.27.0). The page says so and hides the buttons.
-- **No subtitles.**
+- **Seen twice, not reproduced alone:** the first segment of a Roku HEVC→H.264 stream answered
+  HTTP 500 while another stream of the same movie had subtitles burned in. The same request
+  works on its own.
 - **Not yet verified on a real TV.** Movies 0.1.1 is installed on the venue box (0.27.1), but
   there's no live testing at the venue until the user says so.
 

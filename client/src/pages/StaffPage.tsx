@@ -8,6 +8,7 @@ import { bgUrl } from "@bargames/sdk/client";
 import { clock, runtime, type Card, type FileDetails, type Library, type StaffState, type TvInfo } from "@movies/shared";
 import { api, ApiError, img, type ControlAction, type ItemWithFit } from "../api";
 import { AuthGate, useStaffAuth } from "../components/Auth";
+import { defaults, hasChoices, isDefault, toChoice, trackWords, TrackPicker, type Picked } from "../components/Tracks";
 import { useVenue } from "../useVenue";
 
 const TV_KEY = "movies.tv";
@@ -71,6 +72,30 @@ function Dock({ tvs, selected, onSelect, notify }: { tvs: TvInfo[]; selected: st
   const tv = tvs.find((t) => t.displayId === selected);
   const n = tv?.now;
   const [busy, setBusy] = useState(false);
+  const [tracksOpen, setTracksOpen] = useState(false);
+  const [picked, setPicked] = useState<Picked>({ sub: null });
+  // A new TV or a new title closes the panel (its tracks belong to the old one).
+  const key = `${selected}|${n?.itemId ?? ""}`;
+  useEffect(() => setTracksOpen(false), [key]);
+  const openTracks = () => {
+    if (!n) return;
+    setPicked({ ...(n.audioIndex != null ? { audio: n.audioIndex } : {}), sub: n.subtitleIndex ?? null });
+    setTracksOpen(true);
+  };
+  const applyTracks = async () => {
+    if (!tv || !n?.tracks) return;
+    setBusy(true);
+    try {
+      await api.tracks(tv.displayId, toChoice(n.tracks, picked));
+      notify(tv.canSeek ? `Switching on ${tv.name}: it picks up where it was.` : `Switching on ${tv.name}: it starts again from the beginning.`);
+      setTracksOpen(false);
+    } catch (err) {
+      notify(err instanceof Error ? err.message : "That didn't change.", true);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const unchanged = !!n && picked.sub === (n.subtitleIndex ?? null) && (picked.audio ?? null) === (n.audioIndex ?? null);
   const control = async (a: ControlAction) => {
     if (!tv) return;
     setBusy(true);
@@ -106,6 +131,7 @@ function Dock({ tvs, selected, onSelect, notify }: { tvs: TvInfo[]; selected: st
                       ? n.message
                       : `${stateWords(tv)} · ${clock(n.positionSec)}${n.durationSec ? ` / ${clock(n.durationSec)}` : ""} · ${n.method === "direct" ? "as it is" : "server converts"}${n.upNext ? ` · ${n.upNext}` : ""}`}
                   </span>
+                  {n.state !== "error" && trackWords(n.tracks, n.audioIndex, n.subtitleIndex) && <span className="muted small">{trackWords(n.tracks, n.audioIndex, n.subtitleIndex)}</span>}
                   {n.durationSec ? (
                     <span className="progress wide">
                       <span style={{ width: `${Math.min(100, (n.positionSec / n.durationSec) * 100)}%` }} />
@@ -136,7 +162,26 @@ function Dock({ tvs, selected, onSelect, notify }: { tvs: TvInfo[]; selected: st
                 <button className="danger" disabled={busy} onClick={() => void control("stop")}>
                   ■ Stop
                 </button>
+                {hasChoices(n.tracks) && n.state !== "error" && (
+                  <button className={tracksOpen ? "is-on" : ""} disabled={busy} onClick={() => (tracksOpen ? setTracksOpen(false) : openTracks())} aria-expanded={tracksOpen}>
+                    Audio &amp; subtitles
+                  </button>
+                )}
               </div>
+              {tracksOpen && hasChoices(n.tracks) && (
+                <div className="dock-tracks">
+                  <TrackPicker tracks={n.tracks} value={picked} onChange={setPicked} disabled={busy} />
+                  {!tv.canSeek && <p className="tracks-note">{tv.name} can't start part-way: changing these starts the movie again from the beginning.</p>}
+                  <div className="dock-tracks-actions">
+                    <button className="primary" disabled={busy || unchanged} onClick={() => void applyTracks()}>
+                      {tv.canSeek ? `Switch (picks up at ${clock(n.positionSec)})` : "Switch (starts over)"}
+                    </button>
+                    <button disabled={busy} onClick={() => setTracksOpen(false)}>
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
             </>
           ) : (
             <p className="muted dock-idle">{tv.online ? `${tv.name} is ready. Pick something to play on it.` : `${tv.name} is offline.`}</p>
@@ -151,11 +196,17 @@ function Details({ id, tvs, tv, onTv, onOpen, onClose, notify }: { id: string; t
   const [item, setItem] = useState<ItemWithFit | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [picked, setPicked] = useState<Picked>({ sub: null });
   useEffect(() => {
     setItem(null);
     setError("");
-    api.item(id).then(setItem, (err: Error) => setError(err.message));
+    api.item(id).then(
+      (it) => (setItem(it), setPicked(defaults(it.tracks))),
+      (err: Error) => setError(err.message),
+    );
   }, [id]);
+  const tracks = item && (item.kind === "movie" || item.kind === "episode") && hasChoices(item.tracks) ? item.tracks : undefined;
+  const plain = isDefault(item?.tracks, picked);
   const target = tvs.find((t) => t.displayId === tv);
   const fit = item && target ? item.fit[target.displayId] : undefined;
   const container = item && (item.kind === "series" || item.kind === "season" || item.kind === "collection");
@@ -164,7 +215,7 @@ function Details({ id, tvs, tv, onTv, onOpen, onClose, notify }: { id: string; t
     if (!item || !target) return;
     setBusy(true);
     try {
-      const r = await api.play(target.displayId, item.id, resume);
+      const r = await api.play(target.displayId, item.id, resume, tracks ? toChoice(tracks, picked) : {});
       notify(`Playing ${r.title} on ${target.name}.`);
       onClose();
     } catch (err) {
@@ -201,9 +252,10 @@ function Details({ id, tvs, tv, onTv, onOpen, onClose, notify }: { id: string; t
                       </button>
                     ))}
                   </div>
-                  {fit && <p className={`fit ${fit.direct ? "ok" : ""}`}>{fit.direct ? "Plays as it is: full quality, original sound." : `The server converts it for this TV (${fit.reasons.join(", ")}).`}</p>}
+                  {fit && plain && <p className={`fit ${fit.direct ? "ok" : ""}`}>{fit.direct ? "Plays as it is: full quality, original sound." : `The server converts it for this TV (${fit.reasons.join(", ")}).`}</p>}
                 </div>
               )}
+              {tracks && target && <TrackPicker tracks={tracks} value={picked} onChange={setPicked} is4k={(item.file?.video?.height ?? 0) > 1100} disabled={busy} />}
               {item.playable && target && (
                 <div className="actions">
                   {item.resumeSec && !container && target.canSeek ? (

@@ -43,12 +43,49 @@ export interface FileDetails {
   sizeBytes?: number;
 }
 
+/** One audio or subtitle track of a file. */
+export interface Track {
+  /** The server's stream index. */
+  index: number;
+  /** "Dolby Digital 5.1 - English", "Commentary by the director - English - AAC - Stereo". */
+  label: string;
+  language?: string;
+  codec: string;
+  channels?: number;
+  /** The file's default track. */
+  default: boolean;
+  /** Subtitles: only the foreign-language parts. */
+  forced?: boolean;
+  /** Subtitles: a file next to the video (.srt), not inside it. */
+  external?: boolean;
+  /** Subtitles: text (SRT, ASS…) rather than pictures (PGS, DVD). */
+  text?: boolean;
+}
+
+export interface Tracks {
+  audio: Track[];
+  subtitles: Track[];
+  /** The audio track that plays when none is picked. */
+  defaultAudio?: number;
+}
+
+/**
+ * Which tracks to play. Audio: a stream index; absent plays the default. Subtitles: a stream
+ * index to burn in; null or absent: none.
+ */
+export interface TrackChoice {
+  audioIndex?: number;
+  subtitleIndex?: number | null;
+}
+
 export interface ItemDetail extends Card {
   overview?: string;
   runtimeSec?: number;
   /** Where the server's resume point is (part-watched), seconds. */
   resumeSec?: number;
   file?: FileDetails;
+  /** A movie's or an episode's audio and subtitle tracks. */
+  tracks?: Tracks;
   /** Seasons of a series, episodes of a season, movies of a collection. */
   children?: Card[];
   seriesTitle?: string;
@@ -70,6 +107,11 @@ export interface NowPlaying {
   /** What comes after this (a series' next episodes, the rest of a collection). */
   upNext?: string;
   message?: string;
+  /** The tracks of what's playing, and which are on. */
+  tracks?: Tracks;
+  audioIndex?: number;
+  /** The subtitle burned in, or null for none. */
+  subtitleIndex?: number | null;
 }
 
 /** A box TV that can play video. */

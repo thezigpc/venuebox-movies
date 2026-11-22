@@ -7,7 +7,7 @@ import path from "node:path";
 import express, { type NextFunction, type Request, type Response } from "express";
 import type { BarGames } from "@bargames/sdk/server";
 import { adminRouter, createAdminAuth, createJsonStore, serveSpa, type AdminAuth } from "@bargames/gamekit/server";
-import { canDirectPlay, DEFAULT_NAME, isProfileId, normaliseServerUrl, type AdminState, type CertOffer, type ServerStatus, type StaffState, type TestResult } from "@movies/shared";
+import { canDirectPlay, DEFAULT_NAME, isProfileId, normaliseServerUrl, type AdminState, type CertOffer, type ServerStatus, type StaffState, type TestResult, type TrackChoice } from "@movies/shared";
 import { venueName } from "./bargames.js";
 import { VERSION } from "./config.js";
 import { createHttp, normaliseFingerprint, probeCertificate, type Http } from "./http.js";
@@ -57,6 +57,20 @@ class BadRequest extends Error {
 }
 
 const str = (v: unknown, max = 500) => (typeof v === "string" ? v.trim().slice(0, max) : "");
+
+/** Audio and subtitle choice from a request: a stream index, or null for no subtitles. */
+function trackChoice(b: Record<string, unknown>): TrackChoice {
+  const idx = (v: unknown) => (typeof v === "number" && Number.isInteger(v) && v >= 0 && v < 1000 ? v : undefined);
+  const out: TrackChoice = {};
+  const a = idx(b.audioIndex);
+  if (a != null) out.audioIndex = a;
+  if (b.subtitleIndex === null) out.subtitleIndex = null;
+  else {
+    const s = idx(b.subtitleIndex);
+    if (s != null) out.subtitleIndex = s;
+  }
+  return out;
+}
 
 export async function createApp(o: AppOptions): Promise<MoviesApp> {
   const bg = o.bg;
@@ -281,7 +295,7 @@ export async function createApp(o: AppOptions): Promise<MoviesApp> {
       const displayId = str(b.displayId, 200);
       const itemId = str(b.itemId, 200);
       if (!displayId || !itemId) throw new BadRequest("Pick a movie and a TV.");
-      const r = await player.play(displayId, itemId, { resume: b.resume !== false });
+      const r = await player.play(displayId, itemId, { resume: b.resume !== false, ...trackChoice(b) });
       res.json({ ok: true, value: r });
     }),
   );
@@ -297,6 +311,15 @@ export async function createApp(o: AppOptions): Promise<MoviesApp> {
             : null;
       if (!action) throw new BadRequest("Unknown control.");
       await player.control(String(req.params.id), action);
+      res.json({ ok: true, value: player.nowPlaying(String(req.params.id)) });
+    }),
+  );
+
+  admin.post(
+    "/tvs/:id/tracks",
+    safe(async (req, res) => {
+      const choice = trackChoice((req.body ?? {}) as Record<string, unknown>);
+      await player.setTracks(String(req.params.id), choice);
       res.json({ ok: true, value: player.nowPlaying(String(req.params.id)) });
     }),
   );

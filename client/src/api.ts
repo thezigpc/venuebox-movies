@@ -2,7 +2,7 @@
 // to the media server: posters and everything else come through this app.
 
 import { bgUrl } from "@bargames/sdk/client";
-import type { AdminState, Card, ItemDetail, Library, Page, ServerStatus, StaffState, TestResult } from "@movies/shared";
+import type { AdminState, Card, ItemDetail, Library, NowPlaying, Page, ServerStatus, StaffState, TestResult, TrackChoice } from "@movies/shared";
 
 const TOKEN_KEY = "movies.adminToken";
 
@@ -75,7 +75,8 @@ export const api = {
   browse: (library: string, page: number) => v(request<{ value: Page<Card> }>("GET", `/api/admin/browse?library=${encodeURIComponent(library)}&page=${page}`)),
   search: (q: string) => v(request<{ value: Card[] }>("GET", `/api/admin/search?q=${encodeURIComponent(q)}`)),
   item: (id: string) => v(request<{ value: ItemWithFit }>("GET", `/api/admin/items/${encodeURIComponent(id)}`)),
-  play: (displayId: string, itemId: string, resume: boolean) => v(request<{ value: { title: string; method: "direct" | "transcode"; reasons: string[] } }>("POST", "/api/admin/play", { displayId, itemId, resume })),
+  play: (displayId: string, itemId: string, resume: boolean, tracks: TrackChoice = {}) => v(request<{ value: { title: string; method: "direct" | "transcode"; reasons: string[] } }>("POST", "/api/admin/play", { displayId, itemId, resume, ...tracks })),
+  tracks: (displayId: string, choice: TrackChoice) => v(request<{ value: NowPlaying | null }>("POST", `/api/admin/tvs/${encodeURIComponent(displayId)}/tracks`, choice)),
   control: (displayId: string, action: ControlAction) => request("POST", `/api/admin/tvs/${encodeURIComponent(displayId)}/control`, { action }),
 
   setServer: (url: string) => v(request<{ value: { notes: string[]; test: TestResult; server: ServerStatus } }>("PUT", "/api/admin/server", { url })),

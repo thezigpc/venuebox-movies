@@ -6,9 +6,10 @@
 // Every address is built from the configured server URL (any scheme, host, port, base path),
 // so a move behind a tunnel is a settings change only.
 
-import { canDirectPlay, serverPath, type Card, type FileDetails, type FileInfo, type ItemDetail, type ItemKind, type Library, type Page, type TestResult, type TvProfile } from "@movies/shared";
+import { canDirectPlay, serverPath, type Card, type FileDetails, type FileInfo, type ItemDetail, type ItemKind, type Library, type Page, type TestResult, type TrackChoice, type Tracks, type TvProfile } from "@movies/shared";
 import { HttpError, type Http, type HttpResponse } from "../http.js";
 import { SourceError, type MediaSource, type Playback, type PlaySession, type ReportPosition } from "./types.js";
+import { log } from "../log.js";
 
 export interface JellyfinAuth {
   token: string;
@@ -73,6 +74,10 @@ interface JStream {
   DisplayTitle?: string;
   Index?: number;
   IsDefault?: boolean;
+  IsForced?: boolean;
+  IsExternal?: boolean;
+  IsTextSubtitleStream?: boolean;
+  Title?: string;
 }
 interface JSource {
   Id: string;
@@ -200,6 +205,34 @@ export function fileDetails(s: JSource): FileDetails {
     ...(a ? { audio: defined({ codec: (a.Codec ?? "").toLowerCase(), channels: a.Channels, language: a.Language, title: a.DisplayTitle }) } : {}),
     ...(s.Bitrate ? { bitrate: s.Bitrate } : {}),
     ...(s.Size ? { sizeBytes: s.Size } : {}),
+  };
+}
+
+/** A track's name for staff: the server's, without the flags we show ourselves. */
+function trackLabel(m: JStream): string {
+  const base = (m.DisplayTitle ?? m.Title ?? "").replace(/\s*-\s*(Default|Forced|External)\b/gi, "").trim();
+  return base || [m.Language, (m.Codec ?? "").toUpperCase()].filter(Boolean).join(" ") || `Track ${m.Index ?? "?"}`;
+}
+
+export function fileTracks(s: JSource): Tracks {
+  const streams = s.MediaStreams ?? [];
+  const track = (m: JStream) =>
+    defined({
+      index: m.Index ?? -1,
+      label: trackLabel(m),
+      language: m.Language || undefined,
+      codec: (m.Codec ?? "").toLowerCase(),
+      channels: m.Type === "Audio" ? m.Channels : undefined,
+      default: m.IsDefault === true,
+      forced: m.Type === "Subtitle" && m.IsForced ? true : undefined,
+      external: m.Type === "Subtitle" && m.IsExternal ? true : undefined,
+      text: m.Type === "Subtitle" ? m.IsTextSubtitleStream === true : undefined,
+    });
+  const def = pickAudio(s)?.Index;
+  return {
+    audio: streams.filter((m) => m.Type === "Audio" && typeof m.Index === "number").map(track),
+    subtitles: streams.filter((m) => m.Type === "Subtitle" && typeof m.Index === "number").map(track),
+    ...(typeof def === "number" ? { defaultAudio: def } : {}),
   };
 }
 
@@ -413,7 +446,7 @@ export class JellyfinSource implements MediaSource {
       ...(it.Overview ? { overview: it.Overview } : {}),
       ...(it.RunTimeTicks ? { runtimeSec: Math.round(fromTicks(it.RunTimeTicks)) } : {}),
       ...(resume > 0 && !it.UserData?.Played ? { resumeSec: Math.round(resume) } : {}),
-      ...(src ? { file: fileDetails(src) } : {}),
+      ...(src ? { file: fileDetails(src), tracks: fileTracks(src) } : {}),
       ...(kids.length ? { children: kids.map((k) => this.card(k)) } : {}),
       ...(it.SeriesName ? { seriesTitle: it.SeriesName } : {}),
       playable: ["movie", "episode", "series", "season", "collection"].includes(card.kind),
@@ -441,10 +474,21 @@ export class JellyfinSource implements MediaSource {
 
   // ---------------------------------------------------------------- playback
 
-  private async playbackInfo(id: string, tv: TvProfile, directPlay: boolean) {
+  /**
+   * Asks the server how to play an item. Track choices only count with the file's id
+   * (mediaSourceId): without it the server takes its own defaults, subtitle included.
+   */
+  private async playbackInfo(id: string, tv: TvProfile, directPlay: boolean, tracks?: { mediaSourceId: string; audioIndex?: number; subtitleIndex: number }) {
     const auth = this.requireAuth();
-    const r = await this.call("POST", `/Items/${encodeURIComponent(id)}/PlaybackInfo?userId=${encodeURIComponent(auth.userId)}`, {
+    const q = new URLSearchParams({ userId: auth.userId });
+    if (tracks) {
+      q.set("mediaSourceId", tracks.mediaSourceId);
+      if (tracks.audioIndex != null) q.set("audioStreamIndex", String(tracks.audioIndex));
+      q.set("subtitleStreamIndex", String(tracks.subtitleIndex));
+    }
+    const r = await this.call("POST", `/Items/${encodeURIComponent(id)}/PlaybackInfo?${q}`, {
       UserId: auth.userId,
+      ...(tracks ? { MediaSourceId: tracks.mediaSourceId, ...(tracks.audioIndex != null ? { AudioStreamIndex: tracks.audioIndex } : {}) } : {}),
       DeviceProfile: deviceProfile(tv),
       MaxStreamingBitrate: tv.maxBitrate,
       EnableDirectPlay: directPlay,
@@ -452,19 +496,29 @@ export class JellyfinSource implements MediaSource {
       EnableTranscoding: true,
       AllowVideoStreamCopy: true,
       AllowAudioStreamCopy: true,
-      SubtitleStreamIndex: -1,
+      SubtitleStreamIndex: tracks?.subtitleIndex ?? -1,
       AutoOpenLiveStream: true,
     });
     return r.json<{ MediaSources?: JSource[]; PlaySessionId?: string; ErrorCode?: string }>();
   }
 
-  async playback(id: string, tv: TvProfile, opts: { startAt?: number } = {}): Promise<Playback> {
+  async playback(id: string, tv: TvProfile, opts: { startAt?: number } & TrackChoice = {}): Promise<Playback> {
     const auth = this.requireAuth();
     let info = await this.playbackInfo(id, tv, true);
-    // The server would send the file as it is, but our own check says this TV can't play it
-    // (an MKV on an Apple TV, 4K turned off): ask again for its HLS.
     const first = info.MediaSources?.[0];
-    if (first?.SupportsDirectPlay && !first.TranscodingUrl && !canDirectPlay(tv, fileInfo(fileDetails(first))).ok) info = await this.playbackInfo(id, tv, false);
+    // A chosen track: another audio track than the file's default, or a subtitle to burn in.
+    const has = (type: string, i?: number | null) => i != null && i >= 0 && (first?.MediaStreams ?? []).some((m) => m.Type === type && m.Index === i);
+    const defAudio = first ? pickAudio(first)?.Index : undefined;
+    const audioIndex = has("Audio", opts.audioIndex) && opts.audioIndex !== defAudio ? opts.audioIndex : undefined;
+    const subtitleIndex = has("Subtitle", opts.subtitleIndex) ? (opts.subtitleIndex as number) : null;
+    if (first && (audioIndex != null || subtitleIndex != null)) {
+      // Only the server's HLS can carry them (the TV's own player picks the default track).
+      info = await this.playbackInfo(id, tv, false, { mediaSourceId: first.Id, audioIndex, subtitleIndex: subtitleIndex ?? -1 });
+    } else if (first?.SupportsDirectPlay && !first.TranscodingUrl && !canDirectPlay(tv, fileInfo(fileDetails(first))).ok) {
+      // The server would send the file as it is, but our own check says this TV can't play it
+      // (an MKV on an Apple TV, 4K turned off): ask again for its HLS.
+      info = await this.playbackInfo(id, tv, false);
+    }
     if (info.ErrorCode) {
       const why: Record<string, string> = {
         NotAllowed: "This Jellyfin user isn't allowed to play that (check its playback rights).",
@@ -492,21 +546,31 @@ export class JellyfinSource implements MediaSource {
         ...(startAt ? { startAt } : {}),
         reasons: [],
         session: { itemId: id, mediaSourceId: src.Id, playSessionId: ps, method: "direct" },
+        ...(typeof defAudio === "number" ? { audioIndex: defAudio } : {}),
+        subtitleIndex: null,
       };
     }
     if (!src.TranscodingUrl) {
       throw new SourceError("This TV can't play that file as it is, and the server won't transcode it for this user (turn on transcoding for the Jellyfin user).", 409, "refused");
     }
-    let path = withoutBurnedSubtitles(src.TranscodingUrl);
+    // No subtitle chosen: the server's own pick isn't burned in. One chosen: it is.
+    let path = subtitleIndex == null ? withoutBurnedSubtitles(src.TranscodingUrl) : src.TranscodingUrl;
+    const urlQ = new URLSearchParams(path.split("?", 2)[1] ?? "");
+    const usedAudio = Number(urlQ.get("AudioStreamIndex") ?? NaN);
+    const burned = subtitleIndex != null && urlQ.get("SubtitleStreamIndex") === String(subtitleIndex) ? subtitleIndex : null;
+    if (subtitleIndex != null && burned == null) log.warn("jellyfin", "the server didn't take the subtitle", { item: id, subtitle: subtitleIndex });
     if (!/[?&](api_key|ApiKey)=/i.test(path)) path += `${path.includes("?") ? "&" : "?"}api_key=${encodeURIComponent(auth.token)}`;
-    const serverReasons = transcodeReasons(src, path);
+    const serverReasons = transcodeReasons(src, path).filter((r) => r !== "DirectPlayError");
+    const picked = [...(audioIndex != null ? ["another audio track"] : []), ...(burned != null ? ["subtitles burned in"] : [])];
     return {
       url: serverPath(base, path),
       mime: HLS_MIME,
       directPlay: false,
       ...(startAt ? { startAt } : {}),
-      reasons: ours.ok ? serverReasons : ours.reasons,
+      reasons: [...picked, ...(ours.ok ? serverReasons : ours.reasons)],
       session: { itemId: id, mediaSourceId: src.Id, playSessionId: ps, method: "transcode" },
+      ...(Number.isFinite(usedAudio) ? { audioIndex: usedAudio } : typeof defAudio === "number" ? { audioIndex: defAudio } : {}),
+      subtitleIndex: burned,
     };
   }
 

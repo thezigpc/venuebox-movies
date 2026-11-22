@@ -47,7 +47,7 @@ const MOVIES: J[] = [
     RunTimeTicks: 5400 * 1e7,
     ImageTags: { Primary: "t" },
     UserData: { Played: true },
-    MediaSources: [{ Id: "m2", Container: "mkv", Bitrate: 8_000_000, MediaStreams: [stream("Video", "h264", { Width: 1920, Height: 1080, VideoRangeType: "SDR" }), stream("Audio", "ac3", { Channels: 6, Index: 1 })], DefaultAudioStreamIndex: 1 }],
+    MediaSources: [{ Id: "m2", Container: "mkv", Bitrate: 8_000_000, MediaStreams: [stream("Video", "h264", { Width: 1920, Height: 1080, VideoRangeType: "SDR" }), stream("Audio", "ac3", { Channels: 6, Index: 1, Language: "eng", DisplayTitle: "Dolby Digital 5.1 - English - Default", IsDefault: true }), stream("Audio", "aac", { Channels: 2, Index: 2, Language: "fre", DisplayTitle: "French - AAC - Stereo" }), stream("Subtitle", "PGSSUB", { Index: 3, Language: "eng", DisplayTitle: "English - Default - PGSSUB", IsDefault: true, IsTextSubtitleStream: false }), stream("Subtitle", "subrip", { Index: 4, Language: "spa", DisplayTitle: "Spanish - SUBRIP - External", IsExternal: true, IsTextSubtitleStream: true })], DefaultAudioStreamIndex: 1 }],
   },
 ];
 const EPISODES: J[] = [1, 2, 3].map((n) => ({
@@ -61,7 +61,7 @@ const EPISODES: J[] = [1, 2, 3].map((n) => ({
   IndexNumber: n,
   RunTimeTicks: 1800 * 1e7,
   UserData: { Played: n === 1 },
-  MediaSources: [{ Id: `e${n}`, Container: "mkv", Bitrate: 3_000_000, MediaStreams: [stream("Video", "h264", { Width: 1280, Height: 720 }), stream("Audio", "aac", { Channels: 2, Index: 1 })], DefaultAudioStreamIndex: 1 }],
+  MediaSources: [{ Id: `e${n}`, Container: "mkv", Bitrate: 3_000_000, MediaStreams: [stream("Video", "h264", { Width: 1280, Height: 720 }), stream("Audio", "aac", { Channels: 2, Index: 1, Language: "eng", DisplayTitle: "English - AAC - Stereo - Default", IsDefault: true }), stream("Audio", "aac", { Channels: 2, Index: n === 3 ? 5 : 2, Language: "fre", DisplayTitle: "French - AAC - Stereo" }), stream("Subtitle", "subrip", { Index: n === 3 ? 6 : 3, Language: "fre", DisplayTitle: "French - SUBRIP", IsTextSubtitleStream: true }), stream("Subtitle", "subrip", { Index: n === 3 ? 7 : 4, Language: "eng", DisplayTitle: "English - Forced - SUBRIP", IsForced: true, IsTextSubtitleStream: true })], DefaultAudioStreamIndex: 1 }],
 }));
 const OTHER: J[] = [
   { Id: "s1", Name: "The Show", Type: "Series", ProductionYear: 2015, ImageTags: { Primary: "t" } },
@@ -81,17 +81,19 @@ export interface FakeJellyfin {
   reports: { kind: string; body: J }[];
   serverId: string;
   isAdmin: boolean;
+  /** Slows PlaybackInfo down (ms), to test what happens meanwhile. */
+  playbackDelayMs: number;
   close(): Promise<void>;
 }
 
 /** A pretend Jellyfin. basePath: served under it (a reverse proxy's /jellyfin). tls: https with the self-signed fixture. */
 export async function fakeJellyfin(o: { basePath?: string; tls?: boolean } = {}): Promise<FakeJellyfin> {
   const base = o.basePath ?? "";
-  const jf: FakeJellyfin = { url: "", requests: [], reports: [], serverId: "server-1", isAdmin: false, close: async () => undefined };
+  const jf: FakeJellyfin = { url: "", requests: [], reports: [], serverId: "server-1", isAdmin: false, playbackDelayMs: 0, close: async () => undefined };
   const handler = (req: http.IncomingMessage, res: http.ServerResponse) => {
     let raw = "";
     req.on("data", (c) => (raw += c));
-    req.on("end", () => {
+    req.on("end", async () => {
       const u = new URL(req.url ?? "/", "http://x");
       const auth = String(req.headers.authorization ?? "");
       const body = raw ? (JSON.parse(raw) as J) : null;
@@ -139,6 +141,7 @@ export async function fakeJellyfin(o: { basePath?: string; tls?: boolean } = {})
       }
       const pb = /^\/Items\/([^/]+)\/PlaybackInfo$/.exec(p);
       if (pb && req.method === "POST") {
+        if (jf.playbackDelayMs) await new Promise((r) => setTimeout(r, jf.playbackDelayMs));
         const it = byId(pb[1]!) as J | undefined;
         const src = (it?.MediaSources as J[] | undefined)?.[0];
         if (!src) return json({ ErrorCode: "NoCompatibleStream" });
@@ -151,6 +154,13 @@ export async function fakeJellyfin(o: { basePath?: string; tls?: boolean } = {})
         const withinRate = Number(src.Bitrate) <= Number(body?.MaxStreamingBitrate ?? Infinity);
         const direct = dp && withinRate && body?.EnableDirectPlay !== false;
         const seg = prof.TranscodingProfiles?.[0]?.Container ?? "ts";
+        // Like the real server: track choices only count with the file's id (mediaSourceId);
+        // without it, the default audio and the server's own subtitle pick (index 2 here).
+        const msid = u.searchParams.get("mediaSourceId");
+        const qAudio = Number(u.searchParams.get("audioStreamIndex") ?? NaN);
+        const qSub = Number(u.searchParams.get("subtitleStreamIndex") ?? NaN);
+        const audioIdx = msid && Number.isFinite(qAudio) ? qAudio : Number(src.DefaultAudioStreamIndex ?? 1);
+        const subIdx: number | null = msid ? (Number.isFinite(qSub) && qSub >= 0 ? qSub : null) : 2;
         return json({
           PlaySessionId: `ps-${pb[1]}-${jf.requests.length}`,
           MediaSources: [
@@ -158,7 +168,7 @@ export async function fakeJellyfin(o: { basePath?: string; tls?: boolean } = {})
               ...src,
               SupportsDirectPlay: direct,
               SupportsTranscoding: true,
-              ...(direct ? {} : { TranscodingUrl: `/videos/${pb[1]}/master.m3u8?MediaSourceId=${pb[1]}&SegmentContainer=${seg}&VideoBitrate=${body?.MaxStreamingBitrate}&SubtitleStreamIndex=2&SubtitleMethod=Encode&TranscodeReasons=${dp ? "ContainerBitrateExceedsLimit" : "ContainerNotSupported"},SubtitleCodecNotSupported&ApiKey=${TOKEN}` }),
+              ...(direct ? {} : { TranscodingUrl: `/videos/${pb[1]}/master.m3u8?MediaSourceId=${pb[1]}&SegmentContainer=${seg}&VideoBitrate=${body?.MaxStreamingBitrate}&AudioStreamIndex=${audioIdx}${subIdx != null ? `&SubtitleStreamIndex=${subIdx}` : ""}&SubtitleMethod=Encode&TranscodeReasons=${dp ? (body?.EnableDirectPlay === false && withinRate ? "DirectPlayError" : "ContainerBitrateExceedsLimit") : "ContainerNotSupported"},SubtitleCodecNotSupported&ApiKey=${TOKEN}` }),
             },
           ],
         });

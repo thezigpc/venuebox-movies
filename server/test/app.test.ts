@@ -370,6 +370,113 @@ describe("playing", () => {
     assert.match(last().url, /SegmentContainer=mp4/, "HEVC HLS in fMP4 segments");
   });
 
+  test("item tracks: audio and subtitles with labels, the default marked", async () => {
+    const it = (await t.api<{ value: { tracks: { audio: { index: number; label: string; default: boolean }[]; subtitles: { index: number; label: string; external?: boolean; text?: boolean }[]; defaultAudio: number } } }>("GET", "/api/admin/items/m2")).body.value;
+    assert.equal(it.tracks.defaultAudio, 1);
+    assert.deepEqual(it.tracks.audio.map((a) => [a.index, a.label, a.default]), [
+      [1, "Dolby Digital 5.1 - English", true],
+      [2, "French - AAC - Stereo", false],
+    ]);
+    assert.deepEqual(it.tracks.subtitles.map((s) => [s.index, s.label, s.external ?? false, s.text]), [
+      [3, "English - PGSSUB", false, false],
+      [4, "Spanish - SUBRIP", true, true],
+    ]);
+  });
+
+  test("another audio track: the server's HLS with that track, even where the file plays as it is", async () => {
+    const r = await play("roku", "m2", { audioIndex: 2 });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.value.method, "transcode");
+    assert.deepEqual(r.body.value.reasons, ["another audio track"]);
+    assert.match(last().url, /AudioStreamIndex=2/);
+    assert.doesNotMatch(last().url, /SubtitleStreamIndex/, "no subtitle burned in");
+    const q = jf.requests.filter((x) => x.path.includes("/PlaybackInfo")).at(-1)!;
+    assert.equal(q.body!.MediaSourceId, "m2");
+    assert.equal(q.body!.EnableDirectPlay, false);
+    const now = (await state()).tvs.find((x) => x.displayId === "roku")!.now!;
+    assert.equal(now.audioIndex, 2);
+    assert.equal(now.subtitleIndex, null);
+    assert.equal(now.tracks!.audio.length, 2);
+  });
+
+  test("the default audio track picked: still plays as it is", async () => {
+    const r = await play("roku", "m2", { audioIndex: 1, subtitleIndex: null });
+    assert.equal(r.body.value.method, "direct");
+  });
+
+  test("subtitles: burned in, the server told which", async () => {
+    const r = await play("atv", "m2", { subtitleIndex: 4 });
+    assert.equal(r.body.value.method, "transcode");
+    assert.ok(r.body.value.reasons.includes("subtitles burned in"));
+    assert.match(last().url, /SubtitleStreamIndex=4&SubtitleMethod=Encode/);
+    assert.equal((await state()).tvs.find((x) => x.displayId === "atv")!.now!.subtitleIndex, 4);
+  });
+
+  test("a track that isn't in the file is ignored (plays the defaults)", async () => {
+    const r = await play("roku", "m2", { audioIndex: 9, subtitleIndex: 9 });
+    assert.equal(r.body.value.method, "direct");
+    assert.equal((await t.api("POST", "/api/admin/play", { displayId: "roku", itemId: "m2", audioIndex: "x", subtitleIndex: -3 })).status, 200, "bad values are dropped");
+  });
+
+  test("changing tracks while playing: the stream starts again at the same spot", async () => {
+    await play("atv", "m2");
+    t.tvs.statuses.set("atv", { state: "playing", position: 1234 });
+    await t.app.player.tick();
+    const plays = t.tvs.plays.length;
+    const events: string[] = [];
+    t.bg.emit = ((e: { type: string }) => void events.push(e.type)) as unknown as typeof t.bg.emit;
+    const r = await t.api<{ value: { audioIndex: number; subtitleIndex: number | null } }>("POST", "/api/admin/tvs/atv/tracks", { audioIndex: 2, subtitleIndex: 3 });
+    assert.equal(r.status, 200);
+    assert.equal(t.tvs.plays.length, plays + 1);
+    assert.equal(last().startAt, 1231, "a few seconds back from where it was");
+    assert.match(last().url, /AudioStreamIndex=2/);
+    assert.match(last().url, /SubtitleStreamIndex=3/);
+    assert.equal(r.body.value.audioIndex, 2);
+    assert.equal(r.body.value.subtitleIndex, 3);
+    assert.deepEqual(events, [], "no video_started/stopped for a track change");
+    assert.equal(jf.reports.find((x) => x.kind === "/Stopped")?.body.PositionTicks, 1234 * 1e7, "the old stream is reported stopped where it was");
+    // And back to the defaults: the file as it is again.
+    await t.api("POST", "/api/admin/tvs/atv/tracks", { audioIndex: 1, subtitleIndex: null });
+    assert.doesNotMatch(last().url, /SubtitleStreamIndex/);
+  });
+
+  test("the status poll during a switch doesn't lose the TV", async () => {
+    await play("atv", "m2");
+    t.tvs.statuses.set("atv", { state: "playing", position: 500 });
+    await t.app.player.tick();
+    jf.playbackDelayMs = 150;
+    const switching = t.api("POST", "/api/admin/tvs/atv/tracks", { subtitleIndex: 3 });
+    await new Promise((r) => setTimeout(r, 60));
+    await t.app.player.tick();
+    assert.equal((await t.api("POST", "/api/admin/tvs/atv/tracks", { subtitleIndex: 4 })).status, 409, "a second switch waits");
+    assert.equal((await switching).status, 200);
+    jf.playbackDelayMs = 0;
+    const now = (await state()).tvs.find((x) => x.displayId === "atv")!.now;
+    assert.equal(now?.subtitleIndex, 3, "still tracked after the switch");
+  });
+
+  test("changing tracks on a Roku starts over; bad tracks are refused", async () => {
+    await play("roku", "m2");
+    t.tvs.statuses.set("roku", { state: "playing", position: 900 });
+    await t.app.player.tick();
+    await t.api("POST", "/api/admin/tvs/roku/tracks", { audioIndex: 2 });
+    assert.equal(last().startAt, undefined);
+    assert.equal((await t.api("POST", "/api/admin/tvs/roku/tracks", { audioIndex: 7 })).status, 400);
+    assert.equal((await t.api("POST", "/api/admin/tvs/atv/tracks", { audioIndex: 2 })).status, 409, "nothing playing there");
+  });
+
+  test("a series keeps the chosen languages: French audio and subtitles on the next episode", async () => {
+    // e1 is watched, so the series starts at e2; e3 has its French tracks at other indexes.
+    const r = await play("atv", "s1", { audioIndex: 2, subtitleIndex: 3 });
+    assert.equal(r.status, 200);
+    assert.match(last().url, /\/videos\/e2\/.*AudioStreamIndex=2.*SubtitleStreamIndex=3/);
+    t.tvs.statuses.set("atv", { state: "playing", position: 1790, duration: 1800 });
+    await t.app.player.tick();
+    t.tvs.statuses.set("atv", { state: "stopped" });
+    await t.app.player.tick();
+    assert.match(last().url, /\/videos\/e3\/.*AudioStreamIndex=5.*SubtitleStreamIndex=6/, "same languages, e3's own indexes");
+  });
+
   test("the box asks for Apple TV video pairing: staff are told how", async () => {
     t.tvs.playAnswer = { ok: false, reason: "needs-pairing" };
     const r = await play("atv", "m2");

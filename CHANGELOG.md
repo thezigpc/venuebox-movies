@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.3.0 (2026-11-21)
+- **Audio track and subtitles**, picked before a movie starts (the details sheet) and changed
+  while it plays (the dock: "Audio & subtitles").
+  - The default audio track and no subtitles play as before: the file as it is when the TV
+    can play it.
+  - Another audio track: the server repackages the movie with it. The picture is copied.
+  - Subtitles: burned into the picture. That's the server's heaviest work, and the page
+    warns, more strongly on a 4K movie.
+  - Changing while playing starts the stream again a few seconds back from where it was. A
+    TV that can't start part-way (a Roku) starts over, and the page says so first.
+  - A series or a collection keeps the chosen languages on the next items, using each file's
+    own tracks.
+- Jellyfin only honours track choices when the request names the file (MediaSourceId). Movies
+  now sends it.
+- Fix: the status poll could drop a TV's session while a stream was starting. The TV kept
+  playing, but Movies lost track of it.
+
 ## 0.2.2 (2026-11-21)
 - SDK 0.18.2 (box 0.28.2): a screen plugged into the box (`video.kind: "local"`, played
   by mpv) plays movies.

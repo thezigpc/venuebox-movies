@@ -10,6 +10,7 @@
   --accent: var(--venue-accent, #5ab0ff);
   --danger: #e5534b;
   --ok: #4cc38a;
+  --warn: #f0b429;
   --radius: var(--venue-radius, 12px);
   --dock-h: 0px;
   color-scheme: dark;
@@ -405,6 +406,51 @@ label.check input {
 }
 .dock-idle {
   margin: 4px 0;
+}
+.remote button.is-on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.dock-tracks {
+  flex: 1 1 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid #2a2f3b;
+}
+.dock-tracks-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Audio and subtitles */
+.tracks {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.tracks-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+.tracks .label {
+  font-size: 0.85em;
+  color: var(--muted);
+}
+.tracks select {
+  min-width: 0;
+}
+.tracks-note {
+  margin: 0;
+  font-size: 0.85em;
+  color: var(--muted);
+}
+.tracks-note.warn {
+  color: var(--warn);
 }
 
 /* Details sheet */
