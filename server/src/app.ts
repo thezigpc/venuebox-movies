@@ -7,7 +7,7 @@ import path from "node:path";
 import express, { type NextFunction, type Request, type Response } from "express";
 import type { BarGames } from "@bargames/sdk/server";
 import { adminRouter, createAdminAuth, createJsonStore, serveSpa, type AdminAuth } from "@bargames/gamekit/server";
-import { canDirectPlay, DEFAULT_NAME, effectiveProfile, isProfileId, normaliseServerUrl, type AdminState, type CertOffer, type ServerStatus, type StaffState, type TestResult } from "@movies/shared";
+import { canDirectPlay, DEFAULT_NAME, isProfileId, normaliseServerUrl, type AdminState, type CertOffer, type ServerStatus, type StaffState, type TestResult } from "@movies/shared";
 import { venueName } from "./bargames.js";
 import { VERSION } from "./config.js";
 import { createHttp, normaliseFingerprint, probeCertificate, type Http } from "./http.js";
@@ -264,8 +264,7 @@ export async function createApp(o: AppOptions): Promise<MoviesApp> {
       const fit: Record<string, { direct: boolean; reasons: string[] }> = {};
       if (item.file) {
         for (const t of await player.tvs()) {
-          const st = store.tv(t.id);
-          const r = canDirectPlay(effectiveProfile(player.profileOf(t).id, { capMbps: st.capMbps, allow4k: st.allow4k }), item.file);
+          const r = canDirectPlay(player.profile(t), item.file);
           fit[t.id] = r.ok ? { direct: true, reasons: [] } : { direct: false, reasons: r.reasons };
         }
       }

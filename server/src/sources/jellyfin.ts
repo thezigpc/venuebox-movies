@@ -99,7 +99,7 @@ const KIND: Record<string, ItemKind> = {
   Folder: "folder",
 };
 
-const MIME: Record<string, string> = { mp4: "video/mp4", m4v: "video/mp4", mov: "video/quicktime", mkv: "video/x-matroska" };
+const MIME: Record<string, string> = { mp4: "video/mp4", m4v: "video/mp4", mov: "video/quicktime", mkv: "video/x-matroska", webm: "video/webm", ts: "video/mp2t", avi: "video/x-msvideo" };
 const HLS_MIME = "application/vnd.apple.mpegurl";
 
 /** The VideoRangeType values a TV with these ranges can be sent as they are. */
@@ -115,10 +115,39 @@ function rangeTypes(ranges: string[]): string[] {
   return [...out];
 }
 
+const SUBTITLE_FORMATS = ["srt", "subrip", "ass", "ssa", "vtt", "webvtt", "mov_text", "pgssub", "pgs", "dvdsub", "dvbsub", "sub", "idx", "smi"];
+
+/**
+ * The server's HLS link without a burned-in subtitle. Jellyfin picks the user's default
+ * subtitle track by itself (SubtitleStreamIndex -1 in the request doesn't stop it) and, for
+ * HLS, burns it into the picture: a full video transcode nobody asked for. Dropping the
+ * subtitle parameters gives the plain remux or transcode.
+ */
+export function withoutBurnedSubtitles(path: string): string {
+  const [p, q = ""] = path.split("?", 2) as [string, string?];
+  const params = new URLSearchParams(q);
+  if (!params.has("SubtitleStreamIndex") && !params.has("SubtitleMethod")) return path;
+  for (const k of ["SubtitleStreamIndex", "SubtitleMethod", "SubtitleCodec"]) params.delete(k);
+  const reasons = params.get("TranscodeReasons");
+  if (reasons != null) {
+    const kept = reasons.split(",").filter((r) => r && r !== "SubtitleCodecNotSupported");
+    if (kept.length) params.set("TranscodeReasons", kept.join(","));
+    else params.delete("TranscodeReasons");
+  }
+  return `${p}?${params}`;
+}
+
+/** The server's reasons for converting: a field on older servers, in the link on 10.9+. */
+function transcodeReasons(src: JSource, path: string): string[] {
+  const field = Array.isArray(src.TranscodeReasons) ? src.TranscodeReasons : src.TranscodeReasons ? String(src.TranscodeReasons).split(",") : [];
+  const fromUrl = new URLSearchParams(path.split("?", 2)[1] ?? "").get("TranscodeReasons")?.split(",") ?? [];
+  return [...new Set([...field, ...fromUrl])].filter((r) => r && r !== "SubtitleCodecNotSupported");
+}
+
 /** Jellyfin's DeviceProfile for a TV: what it plays as it is, and the HLS to make otherwise. */
 export function deviceProfile(p: TvProfile): Record<string, unknown> {
   return {
-    Name: `Venuebox ${p.label}`,
+    Name: p.id === "venuebox" ? p.label : `Venuebox ${p.label}`,
     MaxStreamingBitrate: p.maxBitrate,
     MaxStaticBitrate: p.maxBitrate,
     DirectPlayProfiles: p.directContainers.length ? [{ Type: "Video", Container: p.directContainers.join(","), VideoCodec: p.videoCodecs.join(","), AudioCodec: p.audioCodecs.join(",") }] : [],
@@ -147,8 +176,10 @@ export function deviceProfile(p: TvProfile): Record<string, unknown> {
       },
       { Type: "VideoAudio", Conditions: [{ Condition: "LessThanEqual", Property: "AudioChannels", Value: String(p.maxAudioChannels), IsRequired: false }] },
     ],
-    // No subtitles in 0.1.0: nothing is burned in.
-    SubtitleProfiles: [],
+    // No subtitles are shown yet, and none may be burned in. Declaring the usual formats as
+    // embedded lets a file with a default subtitle track (often PGS) play as it is: without
+    // them, the server refuses direct play (SubtitleCodecNotSupported) and burns the track in.
+    SubtitleProfiles: SUBTITLE_FORMATS.map((Format) => ({ Format, Method: "Embed" })),
   };
 }
 
@@ -466,9 +497,9 @@ export class JellyfinSource implements MediaSource {
     if (!src.TranscodingUrl) {
       throw new SourceError("This TV can't play that file as it is, and the server won't transcode it for this user (turn on transcoding for the Jellyfin user).", 409, "refused");
     }
-    let path = src.TranscodingUrl;
+    let path = withoutBurnedSubtitles(src.TranscodingUrl);
     if (!/[?&](api_key|ApiKey)=/i.test(path)) path += `${path.includes("?") ? "&" : "?"}api_key=${encodeURIComponent(auth.token)}`;
-    const serverReasons = Array.isArray(src.TranscodeReasons) ? src.TranscodeReasons : src.TranscodeReasons ? String(src.TranscodeReasons).split(",") : [];
+    const serverReasons = transcodeReasons(src, path);
     return {
       url: serverPath(base, path),
       mime: HLS_MIME,

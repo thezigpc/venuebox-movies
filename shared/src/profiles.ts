@@ -1,7 +1,7 @@
 // What each kind of TV can play as it is. Kept as data: a new TV model is a new entry here.
 // The server's own device-profile format is built from these in the source (Jellyfin today).
 
-export type TvProfileId = "appletv4k" | "roku3930" | "roku3800" | "unknown";
+export type TvProfileId = "appletv4k" | "roku3930" | "roku3800" | "venuebox" | "unknown";
 
 export interface TvProfile {
   id: TvProfileId;
@@ -65,6 +65,21 @@ export const TV_PROFILES: Record<TvProfileId, TvProfile> = {
     maxAudioChannels: 6,
     maxBitrate: 20_000_000,
   },
+  // A Venuebox app (Android/Google TV, a PC) with its own player. Its real profile is built
+  // from the formats it reports (profileFromFormats); this is only for one that reports none.
+  venuebox: {
+    id: "venuebox",
+    label: "Venuebox app",
+    maxWidth: 1920,
+    maxHeight: 1080,
+    videoCodecs: ["h264"],
+    videoRanges: ["SDR"],
+    directContainers: ["mp4", "m4v", "mkv"],
+    hls: { segment: "ts", videoCodecs: ["h264"] },
+    audioCodecs: ["aac", "ac3"],
+    maxAudioChannels: 6,
+    maxBitrate: 20_000_000,
+  },
   // A TV we don't know: 1080p H.264 HLS with stereo AAC plays everywhere.
   unknown: {
     id: "unknown",
@@ -84,10 +99,62 @@ export const TV_PROFILES: Record<TvProfileId, TvProfile> = {
 export const PROFILE_IDS = Object.keys(TV_PROFILES) as TvProfileId[];
 export const isProfileId = (v: unknown): v is TvProfileId => typeof v === "string" && v in TV_PROFILES;
 
+/** Profiles staff can pick by hand. "venuebox" isn't one: it comes from what the TV reports. */
+export const PICKABLE_PROFILE_IDS = PROFILE_IDS.filter((p) => p !== "venuebox");
+
+/**
+ * What a Venuebox app's player says it plays (bg.tvs()[].video.formats, SDK 0.18.0). Lower-case
+ * names as Jellyfin uses them. "hls" in containers means it plays HLS (not a file container).
+ */
+export interface TvFormats {
+  containers: string[];
+  video: string[];
+  audio: string[];
+  maxHeight?: number;
+  /** Seek and start part-way work. */
+  seek: boolean;
+  /** Audio it sends on to a receiver as it is (it plays those too). */
+  passthrough?: string[];
+}
+
+const lower = (xs: unknown): string[] => (Array.isArray(xs) ? xs.filter((x): x is string => typeof x === "string").map((x) => x.trim().toLowerCase()).filter(Boolean) : []);
+const CODEC_ALIAS: Record<string, string> = { avc: "h264", h265: "hevc", hevc: "hevc", h264: "h264" };
+
+/**
+ * A Venuebox TV's profile, from the formats it reports. Direct play when the file fits them;
+ * otherwise the server's HLS in the best codec it lists (HEVC in fMP4 segments, else H.264 in
+ * TS). HDR: the formats don't list ranges, so a 4K player with HEVC/AV1 is taken to show HDR10
+ * and HLG (its player tone-maps when the screen can't), Dolby Vision only if it lists "dovi".
+ */
+export function profileFromFormats(f: TvFormats): TvProfile {
+  const video = [...new Set(lower(f.video).map((c) => CODEC_ALIAS[c] ?? c))];
+  const audio = [...new Set([...lower(f.audio), ...lower(f.passthrough)])];
+  const containers = lower(f.containers).filter((c) => c !== "hls" && c !== "m3u8");
+  const maxHeight = typeof f.maxHeight === "number" && f.maxHeight >= 240 ? Math.round(f.maxHeight) : 2160;
+  const hlsCodecs = ["hevc", "h264"].filter((c) => video.includes(c));
+  const ranges = ["SDR"];
+  if (maxHeight >= 2160 && video.some((c) => c === "hevc" || c === "av1")) ranges.push("HDR10", "HDR10Plus", "HLG");
+  if (video.includes("dovi")) ranges.push("DOVI");
+  return {
+    id: "venuebox",
+    label: "Venuebox app",
+    maxWidth: Math.round((maxHeight * 16) / 9),
+    maxHeight,
+    videoCodecs: video.filter((c) => c !== "dovi").length ? video.filter((c) => c !== "dovi") : ["h264"],
+    videoRanges: ranges,
+    directContainers: containers,
+    hls: hlsCodecs.includes("hevc") ? { segment: "mp4", videoCodecs: hlsCodecs } : { segment: "ts", videoCodecs: ["h264"] },
+    audioCodecs: audio.length ? audio : ["aac"],
+    maxAudioChannels: 8,
+    maxBitrate: maxHeight > 1080 ? 80_000_000 : maxHeight > 720 ? 40_000_000 : 20_000_000,
+  };
+}
+
 /** The profile for a box TV, from what the box says it is (bg.tvs() video.kind / model). */
 export function profileFor(video?: { kind?: string; model?: string } | null): TvProfileId {
   const kind = (video?.kind ?? "").toLowerCase();
   const model = (video?.model ?? "").toLowerCase();
+  if (kind === "venuebox") return "venuebox";
   if (kind === "appletv" || kind === "airplay") return "appletv4k";
   if (kind === "roku") {
     if (/^3800/.test(model) || /streaming stick/.test(model)) return "roku3800";
@@ -104,9 +171,9 @@ export interface TvOptions {
   allow4k?: boolean;
 }
 
-/** The profile with this TV's settings applied. */
-export function effectiveProfile(id: TvProfileId, o: TvOptions = {}): TvProfile {
-  const p = TV_PROFILES[id] ?? TV_PROFILES.unknown;
+/** The profile with this TV's settings applied. A Venuebox TV's comes from its formats. */
+export function effectiveProfile(id: TvProfileId, o: TvOptions = {}, formats?: TvFormats | null): TvProfile {
+  const p = id === "venuebox" && formats ? profileFromFormats(formats) : (TV_PROFILES[id] ?? TV_PROFILES.unknown);
   const capped = o.allow4k === false && p.maxHeight > 1080 ? { ...p, maxWidth: 1920, maxHeight: 1080 } : p;
   return { ...capped, maxBitrate: chooseBitrate(capped, o.capMbps) };
 }

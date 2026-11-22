@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { canDirectPlay, chooseBitrate, effectiveProfile, normaliseServerUrl, profileFor, redact, serverPath, TV_PROFILES } from "../src/index.js";
+import { canDirectPlay, chooseBitrate, effectiveProfile, normaliseServerUrl, PICKABLE_PROFILE_IDS, profileFor, profileFromFormats, redact, serverPath, TV_PROFILES, type TvFormats } from "../src/index.js";
 
 // ------------------------------------------------------------------ server address
 
@@ -163,4 +163,45 @@ test("redact: Authorization headers in every shape", () => {
 test("redact: leaves ordinary text alone", () => {
   const s = "played Movie X on TV 3 method=direct position=120";
   assert.equal(redact(s), s);
+});
+
+// ------------------------------------------------------------------ Venuebox apps (SDK 0.18.0)
+
+const den: TvFormats = { containers: ["mp4", "mkv", "hls"], video: ["h264", "hevc"], audio: ["aac", "ac3", "eac3"], maxHeight: 2160, seek: true, passthrough: ["truehd"] };
+
+test("venuebox: profile from the TV's formats", () => {
+  assert.equal(profileFor({ kind: "venuebox", model: "Android TV" }), "venuebox");
+  const p = profileFromFormats(den);
+  assert.equal(p.label, "Venuebox app");
+  assert.deepEqual(p.directContainers, ["mp4", "mkv"], "hls isn't a file container");
+  assert.deepEqual(p.audioCodecs, ["aac", "ac3", "eac3", "truehd"], "passthrough codecs play too");
+  assert.equal(p.maxHeight, 2160);
+  assert.equal(p.maxWidth, 3840);
+  assert.deepEqual(p.hls, { segment: "mp4", videoCodecs: ["hevc", "h264"] });
+  assert.ok(p.videoRanges.includes("HDR10") && !p.videoRanges.includes("DOVI"));
+  // A 4K HDR10 HEVC MKV with EAC3 plays as it is; DTS doesn't.
+  const file = { container: "mkv", video: { codec: "hevc", width: 3840, height: 2160, range: "HDR10" }, audio: { codec: "eac3", channels: 6 }, bitrate: 50_000_000 };
+  assert.deepEqual(canDirectPlay(p, file), { ok: true });
+  const dts = canDirectPlay(p, { ...file, audio: { codec: "dts", channels: 6 } });
+  assert.ok(!dts.ok && dts.reasons.some((r) => /dts/.test(r)));
+});
+
+test("venuebox: an H.264-only 1080p player gets TS HLS and no HDR", () => {
+  const p = profileFromFormats({ containers: ["MP4"], video: ["AVC"], audio: [], maxHeight: 1080, seek: false });
+  assert.deepEqual(p.videoCodecs, ["h264"]);
+  assert.deepEqual(p.directContainers, ["mp4"]);
+  assert.deepEqual(p.hls, { segment: "ts", videoCodecs: ["h264"] });
+  assert.deepEqual(p.videoRanges, ["SDR"]);
+  assert.deepEqual(p.audioCodecs, ["aac"], "no audio listed: the safe one");
+  assert.equal(p.maxBitrate, 40_000_000);
+});
+
+test("venuebox: settings apply; no formats falls back; not offered by hand", () => {
+  const p = effectiveProfile("venuebox", { capMbps: 12, allow4k: false }, den);
+  assert.equal(p.maxHeight, 1080);
+  assert.equal(p.maxBitrate, 12_000_000);
+  assert.equal(effectiveProfile("venuebox", {}).maxHeight, TV_PROFILES.venuebox.maxHeight);
+  assert.ok(!PICKABLE_PROFILE_IDS.includes("venuebox"));
+  // Formats only matter for a venuebox profile.
+  assert.equal(effectiveProfile("roku3930", {}, den).maxHeight, 1080);
 });

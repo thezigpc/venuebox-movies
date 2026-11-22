@@ -1,12 +1,13 @@
 // Handing a TV a video link, and reading back what it's doing. The box owns the TVs: on a box
-// this is bg.playVideo / bg.videoControl / bg.videoStatus (SDK 0.17.0, box 0.27.0). The TV
+// this is bg.playVideo / bg.videoControl / bg.videoStatus (SDK 0.17.0, box 0.27.0; Venuebox
+// apps with their own player from SDK 0.18.0, box 0.28.0). The TV
 // streams straight from the media server; the box only passes the link on. In dev, a fake
 // stands in (MOVIES_FAKE_TVS=1).
 //
 // A stream link carries the media server's key: it's passed to the box and to nothing else.
 
 import type { BarGames, VideoAction, VideoRequest, VideoResult, VideoStatus } from "@bargames/sdk/server";
-import type { VideoProblem } from "@movies/shared";
+import type { TvFormats, VideoProblem } from "@movies/shared";
 import type { Http } from "./http.js";
 import { log } from "./log.js";
 
@@ -20,6 +21,33 @@ export interface VideoTv {
   kind: string;
   model?: string;
   online: boolean;
+  /** A Venuebox app's player: what it plays as it is (absent for Apple TVs and Rokus). */
+  formats?: TvFormats;
+}
+
+/**
+ * Skip and resume points: an Apple TV does both; a Roku's built-in player can't seek or start
+ * part-way; a Venuebox app says so in its formats (seek: true).
+ */
+export const canSeek = (tv: { kind: string; formats?: { seek?: boolean } }): boolean =>
+  tv.kind === "roku" ? false : tv.kind === "venuebox" ? tv.formats?.seek === true : true;
+
+/** The box's formats, checked (a malformed one is dropped, so the TV gets the safe profile). */
+function readFormats(f: unknown): TvFormats | undefined {
+  if (!f || typeof f !== "object") return undefined;
+  const o = f as Record<string, unknown>;
+  const list = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : null);
+  const containers = list(o.containers), video = list(o.video), audio = list(o.audio);
+  if (!containers || !video || !audio) return undefined;
+  const passthrough = list(o.passthrough);
+  return {
+    containers,
+    video,
+    audio,
+    ...(typeof o.maxHeight === "number" && Number.isFinite(o.maxHeight) ? { maxHeight: o.maxHeight } : {}),
+    seek: o.seek === true,
+    ...(passthrough ? { passthrough } : {}),
+  };
 }
 
 export interface VideoOut {
@@ -40,9 +68,11 @@ export function createBoxVideo(bg: BarGames): VideoOut {
     async tvs() {
       if (problem()) return [];
       // Only TVs the box can hand a link to carry `video` (a box before 0.27.0 sends none).
-      return (await bg.tvs()).flatMap((t) =>
-        t.video ? [{ id: t.id, name: t.name, ...(t.group ? { group: t.group } : {}), kind: t.video.kind, ...(t.video.model ? { model: t.video.model } : {}), online: t.online }] : [],
-      );
+      return (await bg.tvs()).flatMap((t) => {
+        if (!t.video) return [];
+        const formats = readFormats(t.video.formats);
+        return [{ id: t.id, name: t.name, ...(t.group ? { group: t.group } : {}), kind: t.video.kind, ...(t.video.model ? { model: t.video.model } : {}), online: t.online, ...(formats ? { formats } : {}) }];
+      });
     },
     play: (displayId, a) => bg.playVideo(displayId, a),
     control: (displayId, action) => bg.videoControl(displayId, action),
@@ -54,7 +84,7 @@ export function createBoxVideo(bg: BarGames): VideoOut {
 export function reasonWords(reason?: string): string | undefined {
   switch (reason) {
     case "offline": return "The box can't reach that TV right now.";
-    case "unsupported": return "That TV can't play video links.";
+    case "unsupported": return "That TV can't play that video link.";
     case "not-allowed": return "The venue hasn't allowed Movies to play videos: approve it on the box's Apps page.";
     case "needs-pairing": return "The Apple TV needs pairing for video first: in the box admin, Pair TV control, and type the PIN the TV shows.";
     default: return undefined;
@@ -87,6 +117,14 @@ export function createFakeVideo(opts: { http: Http; now?: () => number; probe?: 
   const tvs: VideoTv[] = [
     { id: "fake-appletv", name: "Fake Apple TV 4K", kind: "appletv", model: "AppleTV4KGen3", online: true },
     { id: "fake-roku", name: "Fake Roku Express", kind: "roku", model: "3930X", online: true },
+    {
+      id: "fake-venuebox",
+      name: "Fake Venuebox Android TV",
+      kind: "venuebox",
+      model: "Android TV 4K",
+      online: true,
+      formats: { containers: ["mp4", "mkv", "webm", "hls"], video: ["h264", "hevc", "vp9", "av1"], audio: ["aac", "ac3", "eac3", "opus", "flac", "mp3"], maxHeight: 2160, seek: true, passthrough: ["ac3", "eac3"] },
+    },
     { id: "fake-other", name: "Fake other TV", kind: "chromecast", online: true },
   ];
   const states = new Map<string, FakeState>();
@@ -138,7 +176,8 @@ export function createFakeVideo(opts: { http: Http; now?: () => number; probe?: 
       return { ok: true };
     },
     async control(displayId, action) {
-      if (typeof action === "object" && tvs.find((t) => t.id === displayId)?.kind === "roku") return { ok: false, reason: "unsupported", message: "A Roku can't seek." };
+      const tv = tvs.find((t) => t.id === displayId);
+      if (typeof action === "object" && tv && !canSeek(tv)) return { ok: false, reason: "unsupported", message: "This TV's player can't seek." };
       const s = states.get(displayId);
       if (!s || s.state === "stopped") return { ok: false, message: "Nothing is playing there." };
       const pos = position(s);

@@ -6,7 +6,9 @@ server for a stream link and hands it to the TV. The TV then streams straight fr
 server in its own player, so the box never carries the video:
 
 - **Apple TV:** AirPlay "play this URL", in full 4K/HDR with the original sound;
-- **Roku:** Roku's built-in player.
+- **Roku:** Roku's built-in player;
+- **Venuebox app** (Android/Google TV, a PC): its own player, which tells the box what it
+  plays (box 0.28.0 or newer).
 
 ```
 iPad (staff) → Movies app: "play Movie X on TV 3"
@@ -57,6 +59,7 @@ which remuxes when the codecs fit and transcodes when they don't.
 | Apple TV 4K | up to 2160p, HEVC/H.264, HDR10/Dolby Vision, MP4/MOV (an MKV is remuxed to HLS), AAC/AC3/EAC3 |
 | Roku Express (3930) | 1080p H.264, MP4/MKV, AAC/AC3 (passthrough) |
 | Roku Streaming Stick (3800) | the same, plus HEVC |
+| Venuebox app | whatever its player lists (containers, codecs, height). Otherwise HLS in HEVC if it lists it, else H.264 |
 | Other | always 1080p H.264 HLS with stereo AAC |
 
 The bitrate asked for is the TV's maximum, lowered by the per-TV cap.
@@ -66,6 +69,8 @@ What a pick plays:
 - a series plays from its next unwatched episode and carries on;
 - a collection plays its movies in order;
 - a library plays shuffled.
+
+Subtitles aren't shown yet, and the server is never asked to burn one in.
 
 Start, progress and stop are reported to Jellyfin, so its resume points stay right.
 
@@ -78,7 +83,7 @@ npm run build
 MOVIES_FAKE_TVS=1 ADMIN_PASSWORD=dev-pass npm start    # http://localhost:3017
 ```
 
-- `MOVIES_FAKE_TVS=1` gives three pretend TVs. Each play fetches the link the way a TV
+- `MOVIES_FAKE_TVS=1` gives four pretend TVs (Apple TV, Roku, Venuebox app, other). Each play fetches the link the way a TV
   would: a file's first bytes, or an HLS playlist and its first segment. That proves the
   server hands out a link that works.
 - Against a pretend box: `npx bargames mock-box . --base /movies` (Git Bash:

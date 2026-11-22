@@ -1,21 +1,23 @@
-# Bar Games integration report: Movies 0.1.1
+# Bar Games integration report: Movies 0.2.0
 
 - **Level:** 3, an app and a media provider.
-- **SDK:** 0.17.0 (box 0.27.0): `bg.playVideo` / `videoControl` / `videoStatus`,
-  `bg.tvs()[].video`, and the standard `video_started` / `video_stopped` events.
+- **SDK:** 0.18.0.
+  - Box 0.27.0: `bg.playVideo` / `videoControl` / `videoStatus`, `bg.tvs()[].video`, and
+    the standard `video_started` / `video_stopped` events.
+  - Box 0.28.0: Venuebox apps, `video: { kind: "venuebox", model, formats }`.
 - **GameKit:** 0.10.6.
 - **Manifest:**
   - `id: movies`, port 3017, `routing.basePath: true`, `network.internet: true`;
   - routes `player`/`host` `/` (the staff picker; staff sign-in) and `admin` `/admin`;
   - `media: { launch: [] }` and `video: { play: true }`.
 
-## Checks (mock box, SDK 0.17.0, `--base /movies`, the real Jellyfin, the mock box's video TVs)
+## Checks (mock box, SDK 0.18.0, `--base /movies`, the real Jellyfin, the mock box's video TVs)
 
 ```
 ✓ health /health → 200
 ✓ /__bargames/venue.json returns the box's branding ("Movies (mock)")
 ✓ /__bargames/theme.css served
-✓ status.media.targets → 2 TV(s)
+✓ status.media.targets → 3 TV(s)
 ✓ media_list → 7 item(s)
 ✓ phone page (routes.player) / → 200
 all checks passed
@@ -25,6 +27,26 @@ On the same mock box:
 - `video_started` / `video_stopped` were accepted.
 - fake-patio (Apple TV 4K): HLS for an MKV, pause, +30 s as an absolute seek, stop.
 - fake-bar (Roku 3930X): a direct MKV; skipping is refused before anything is sent to the TV.
+- fake-den (Venuebox Android TV, 4K HEVC, seek):
+  - four real files played as they are: H.264 MKV with AC3, with EAC3, and an HEVC 10-bit
+    MKV with PGS subtitles;
+  - +30 s was an absolute seek; stop.
+  - The same HEVC MKV went to HLS on the Apple TV ("container mkv") and the Roku ("video
+    hevc"), with no subtitle burned in.
+- No token, server address, key or stream link in the app's or the mock box's log.
+
+## Venuebox apps (SDK 0.18.0)
+
+`video.formats` becomes the TV's profile (`profileFromFormats`, `shared/src/profiles.ts`):
+- **Direct:** the containers it lists ("hls" aside), its video codecs, its audio plus
+  passthrough, up to `maxHeight` (2160 when absent).
+- **Otherwise HLS:** HEVC in fMP4 if it lists HEVC, else H.264 in TS.
+- **HDR:** the formats don't say. A 4K player with HEVC/AV1 is taken to show HDR10, HDR10+
+  and HLG; Dolby Vision only if it lists "dovi".
+- **Bitrate:** 80 Mbit/s at 4K, 40 at 1080p, 20 below, lowered by the per-TV cap; "allow
+  4K" applies.
+- **`seek`:** decides ±30 s and resume points.
+- **Malformed formats:** dropped, so the TV gets a safe 1080p H.264 profile.
 
 ## Events
 
@@ -78,7 +100,7 @@ The brief named them `movie_started` / `movie_stopped`. GameBroker asked for the
 - Jellyfin's dashboard showed the session (Transcode, position).
 - The log had no token, key or password in it.
 
-## Known limits (0.1.0)
+## Known limits
 
 - **One Jellyfin device.** One sign-in is one device, so Jellyfin's "now playing" shows only
   the TV that started last. Resume points and watched marks are per item, so they stay
@@ -86,7 +108,8 @@ The brief named them `movie_started` / `movie_stopped`. GameBroker asked for the
 - **Roku:** no resume point and no ±30 s. Its built-in player starts at the beginning and
   can't seek (box 0.27.0). The page says so and hides the buttons.
 - **No subtitles.**
-- **Not yet verified on a real Apple TV or Roku:** box 0.27.0 isn't on the venue box yet.
+- **Not yet verified on a real TV.** Movies 0.1.1 is installed on the venue box (0.27.1), but
+  there's no live testing at the venue until the user says so.
 
 ## SDK requests (sent to GameBroker; answers in brackets)
 
@@ -96,9 +119,11 @@ The brief named them `movie_started` / `movie_stopped`. GameBroker asked for the
 2. `"video": { "play": true }` permission [accepted].
 3. `bg.tvs()` gains `video: { kind, model }` [accepted].
 4. `media.launch: []` as a media provider [already works].
-5. Standard events `video_started` / `video_stopped` [being added].
-6. Mock box: fake Apple TV and Roku video TVs [coming].
-7. Later:
+5. Standard events `video_started` / `video_stopped` [done, SDK 0.17.0].
+6. Mock box: fake Apple TV and Roku video TVs [done]; fake-den [done, SDK 0.18.0].
+7. Proposed: `formats.ranges` (e.g. ["SDR", "HDR10", "HLG", "DOVI"]), so HDR is known instead
+   of guessed from 4K + HEVC.
+8. Later:
    - a `media_search { q }` command, so a scene can pick one movie;
    - `routes.player` optional for staff-only apps (the validator requires it today, so it's
      `/`, the sign-in-gated picker).

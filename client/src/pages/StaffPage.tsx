@@ -220,7 +220,7 @@ function Details({ id, tvs, tv, onTv, onOpen, onClose, notify }: { id: string; t
                       ▶ {item.kind === "series" || item.kind === "season" ? "Play next episode" : item.kind === "collection" ? "Play the collection" : "Play on this TV"}
                     </button>
                   )}
-                  {item.resumeSec && !container && !target.canSeek && <span className="muted small">A Roku starts from the beginning (it can't pick up at {clock(item.resumeSec)}).</span>}
+                  {item.resumeSec && !container && !target.canSeek && <span className="muted small">This TV starts from the beginning (its player can't pick up at {clock(item.resumeSec)}).</span>}
                   {target.now && <span className="muted small">Replaces {target.now.title} on {target.name}.</span>}
                 </div>
               )}
@@ -341,7 +341,7 @@ function VideoBanner({ state }: { state: StaffState }) {
   if (p === "standalone") return <p className="banner">This copy isn't on a Bar Games box, so it can't play on TVs. Browsing still works.</p>;
   if (p === "box-too-old") return <p className="banner">This box can't hand videos to TVs yet: it needs a box update with video playback.</p>;
   if (state.video.fake) return <p className="banner dev">Dev mode: pretend TVs. Each play checks the stream link really works.</p>;
-  if (!state.tvs.length) return <p className="banner">The box has no TVs that can play videos. Movies plays on Apple TVs and Rokus, and needs box 0.27.0 or newer.</p>;
+  if (!state.tvs.length) return <p className="banner">The box has no TVs that can play videos. Movies plays on Apple TVs and Rokus (box 0.27.0 or newer) and Venuebox apps (box 0.28.0 or newer).</p>;
   return null;
 }
 

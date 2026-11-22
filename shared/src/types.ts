@@ -83,9 +83,14 @@ export interface TvInfo {
   profile: TvProfileId;
   /** The profile was chosen from what the box says the TV is (not set by staff). */
   profileAuto: boolean;
+  /** The profile's name ("Apple TV 4K", "Venuebox app (Android TV 4K)"). */
+  profileLabel: string;
+  /** The TV's own maximum bitrate (Mbit/s) and height, before the cap and 4K settings. */
+  maxMbps: number;
+  maxHeight: number;
   capMbps: number | null;
   allow4k: boolean;
-  /** Skip ±30 s and resume points work (not on a Roku). */
+  /** Skip ±30 s and resume points work (not on a Roku, nor a Venuebox app that can't seek). */
   canSeek: boolean;
   now: NowPlaying | null;
 }

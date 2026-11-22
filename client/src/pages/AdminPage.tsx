@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { BoxAdminLink, VenueAnnouncement } from "@bargames/gamekit/client";
 import { bgUrl } from "@bargames/sdk/client";
-import { normaliseServerUrl, PROFILE_IDS, TV_PROFILES, type AdminState, type TestResult, type TvInfo } from "@movies/shared";
+import { normaliseServerUrl, PICKABLE_PROFILE_IDS, TV_PROFILES, type AdminState, type TestResult, type TvInfo } from "@movies/shared";
 import { api, ApiError } from "../api";
 import { AuthGate, useStaffAuth } from "../components/Auth";
 import { useVenue } from "../useVenue";
@@ -180,7 +180,7 @@ function TvRow({ tv, notify, reload }: { tv: TvInfo; notify: Notify; reload: () 
       notify(err instanceof Error ? err.message : "That didn't save.", true);
     }
   };
-  const max = TV_PROFILES[tv.profile].maxBitrate / 1e6;
+  const max = tv.maxMbps;
   return (
     <tr>
       <td>
@@ -189,8 +189,8 @@ function TvRow({ tv, notify, reload }: { tv: TvInfo; notify: Notify; reload: () 
       </td>
       <td>
         <select value={tv.profileAuto ? "auto" : tv.profile} onChange={(e) => void save({ profile: e.target.value })}>
-          <option value="auto">Automatic ({TV_PROFILES[tv.profile].label})</option>
-          {PROFILE_IDS.map((p) => (
+          <option value="auto">Automatic ({tv.profileAuto ? tv.profileLabel : "from the TV"})</option>
+          {PICKABLE_PROFILE_IDS.map((p) => (
             <option key={p} value={p}>
               {TV_PROFILES[p].label}
             </option>
@@ -202,7 +202,7 @@ function TvRow({ tv, notify, reload }: { tv: TvInfo; notify: Notify; reload: () 
         <span className="muted small">Mbit/s</span>
       </td>
       <td>
-        {TV_PROFILES[tv.profile].maxHeight > 1080 ? (
+        {tv.maxHeight > 1080 ? (
           <label className="check">
             <input type="checkbox" checked={tv.allow4k} onChange={(e) => void save({ allow4k: e.target.checked })} /> Allow 4K
           </label>
@@ -224,7 +224,7 @@ function TvsCard({ state, notify, reload }: { state: AdminState; notify: Notify;
       </p>
       {state.video.problem === "standalone" && <p className="muted">Not on a Bar Games box: there are no TVs to set up.</p>}
       {state.video.problem === "box-too-old" && <p className="muted">This box can't hand videos to TVs yet (it needs a box update).</p>}
-      {!state.video.problem && !state.tvs.length && <p className="muted">The box has no TVs that can play videos. Movies plays on Apple TVs and Rokus, and needs box 0.27.0 or newer.</p>}
+      {!state.video.problem && !state.tvs.length && <p className="muted">The box has no TVs that can play videos. Movies plays on Apple TVs and Rokus (box 0.27.0 or newer) and Venuebox apps (box 0.28.0 or newer).</p>}
       {state.tvs.length > 0 && (
         <div className="table-wrap">
           <table className="tvs">

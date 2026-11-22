@@ -4,16 +4,15 @@
 // so its "now playing" and resume points stay right. Emits video_started / video_stopped,
 // with the TV's name and the title only: never a link.
 
-import { effectiveProfile, profileFor, type NowPlaying, type TvInfo, type TvProfileId, type TvState } from "@movies/shared";
+import { effectiveProfile, profileFor, type NowPlaying, type TvInfo, type TvProfile, type TvProfileId, type TvState } from "@movies/shared";
 import { log } from "./log.js";
 import type { MediaSource, PlaySession } from "./sources/types.js";
 import { SourceError } from "./sources/types.js";
 import type { Store } from "./store.js";
 import type { VideoAction, VideoOut, VideoTv } from "./video.js";
-import { problemWords, reasonWords } from "./video.js";
+import { canSeek, problemWords, reasonWords } from "./video.js";
 
-/** A Roku's built-in player can't seek or start part-way through (box 0.27.0). */
-export const canSeek = (tv: { kind: string }) => tv.kind !== "roku";
+export { canSeek };
 
 export class PlayError extends Error {
   constructor(
@@ -119,9 +118,17 @@ export class Player {
     return set ? { id: set, auto: false } : { id: profileFor({ kind: tv.kind, model: tv.model }), auto: true };
   }
 
+  /** The profile a play asks the server for: the TV's type (or a Venuebox app's own formats) with its settings. */
+  profile(tv: VideoTv): TvProfile {
+    const st = this.o.store.tv(tv.id);
+    return effectiveProfile(this.profileOf(tv).id, { capMbps: st.capMbps, allow4k: st.allow4k }, tv.formats);
+  }
+
   info(tv: VideoTv): TvInfo {
     const st = this.o.store.tv(tv.id);
     const p = this.profileOf(tv);
+    // The TV's own maximum (no cap), for the settings page.
+    const top = effectiveProfile(p.id, {}, tv.formats);
     return {
       displayId: tv.id,
       name: tv.name,
@@ -131,6 +138,9 @@ export class Player {
       online: tv.online,
       profile: p.id,
       profileAuto: p.auto,
+      profileLabel: top.label,
+      maxMbps: Math.round(top.maxBitrate / 1e6),
+      maxHeight: top.maxHeight,
       capMbps: st.capMbps,
       allow4k: st.allow4k,
       canSeek: canSeek(tv),
@@ -202,9 +212,9 @@ export class Player {
     const source = this.o.source();
     const id = s.queue[s.index]!;
     const item = await source.item(id);
-    const st = this.o.store.tv(tv.id);
-    const profile = effectiveProfile(this.profileOf(tv).id, { capMbps: st.capMbps, allow4k: st.allow4k });
-    // A Roku's built-in player always starts from the beginning (and can't seek).
+    const profile = this.profile(tv);
+    // A Roku's built-in player always starts from the beginning (and can't seek); so does a
+    // Venuebox app that says it can't seek.
     const startAt = resume && canSeek(tv) && item.resumeSec && item.resumeSec > 30 ? item.resumeSec : undefined;
     const pb = await source.playback(id, profile, { startAt });
     const title = item.kind === "episode" && item.seriesTitle ? `${item.seriesTitle}: ${item.title}` : item.title;
@@ -250,7 +260,7 @@ export class Player {
     let a: VideoAction;
     if (typeof action === "object" || action === "forward" || action === "back") {
       const tv = (await this.tvs()).find((t) => t.id === displayId);
-      if (tv && !canSeek(tv)) throw new PlayError(`${tv.name} can't skip: a Roku's player doesn't seek.`);
+      if (tv && !canSeek(tv)) throw new PlayError(`${tv.name} can't skip: its player doesn't seek.`);
     }
     if (action === "forward" || action === "back") {
       const to = Math.max(0, c.position + (action === "forward" ? 30 : -30));

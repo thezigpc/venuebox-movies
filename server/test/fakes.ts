@@ -158,7 +158,7 @@ export async function fakeJellyfin(o: { basePath?: string; tls?: boolean } = {})
               ...src,
               SupportsDirectPlay: direct,
               SupportsTranscoding: true,
-              ...(direct ? {} : { TranscodingUrl: `/videos/${pb[1]}/master.m3u8?MediaSourceId=${pb[1]}&SegmentContainer=${seg}&VideoBitrate=${body?.MaxStreamingBitrate}&ApiKey=${TOKEN}`, TranscodeReasons: dp ? ["ContainerBitrateExceedsLimit"] : ["ContainerNotSupported"] }),
+              ...(direct ? {} : { TranscodingUrl: `/videos/${pb[1]}/master.m3u8?MediaSourceId=${pb[1]}&SegmentContainer=${seg}&VideoBitrate=${body?.MaxStreamingBitrate}&SubtitleStreamIndex=2&SubtitleMethod=Encode&TranscodeReasons=${dp ? "ContainerBitrateExceedsLimit" : "ContainerNotSupported"},SubtitleCodecNotSupported&ApiKey=${TOKEN}` }),
             },
           ],
         });

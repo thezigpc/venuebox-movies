@@ -175,7 +175,7 @@ describe("browsing", () => {
 describe("playing", () => {
   beforeEach(() => connect(t, jf));
 
-  const play = (displayId: string, itemId: string, extra: Record<string, unknown> = {}) => t.api<{ value: { method: string }; error?: string }>("POST", "/api/admin/play", { displayId, itemId, ...extra });
+  const play = (displayId: string, itemId: string, extra: Record<string, unknown> = {}) => t.api<{ value: { method: string; reasons: string[] }; error?: string }>("POST", "/api/admin/play", { displayId, itemId, ...extra });
   const last = () => t.tvs.plays.at(-1)!.args;
   const lastPlaybackInfo = () => jf.requests.filter((q) => q.path.includes("/PlaybackInfo")).at(-1)!.body!;
 
@@ -204,6 +204,12 @@ describe("playing", () => {
     assert.equal(r.body.value.method, "transcode");
     assert.match(last().url, /\/jellyfin\/videos\/m2\/master\.m3u8\?.*SegmentContainer=mp4/);
     assert.equal(last().mime, "application/vnd.apple.mpegurl");
+    // The server's default subtitle isn't burned in (a full transcode nobody asked for).
+    assert.doesNotMatch(last().url, /Subtitle(StreamIndex|Method)|SubtitleCodecNotSupported/);
+    assert.match(last().url, /TranscodeReasons=ContainerNotSupported&/);
+    assert.deepEqual(r.body.value.reasons, ["container mkv"]);
+    const dp = lastPlaybackInfo().DeviceProfile as { SubtitleProfiles: { Format: string; Method: string }[] };
+    assert.ok(dp.SubtitleProfiles.some((p) => p.Format === "pgssub" && p.Method === "Embed"), "a PGS track doesn't stop direct play");
   });
 
   test("Roku: H.264 MKV direct, HEVC 4K transcoded to TS", async () => {
@@ -306,6 +312,49 @@ describe("playing", () => {
     assert.equal(r.status, 409);
     assert.match(r.body.error, /can.t skip/);
     assert.equal(t.tvs.controls.length, 0, "nothing sent to the TV");
+  });
+
+  const addDen = (seek: boolean) =>
+    t.tvs.list.push({ id: "den", name: "Den TV", kind: "venuebox", model: "Android TV 4K", online: true, formats: { containers: ["mp4", "mkv", "hls"], video: ["h264", "hevc"], audio: ["aac", "ac3", "eac3"], maxHeight: 2160, seek } });
+
+  test("Venuebox app: its formats decide; a 4K HEVC MP4 and an H.264 MKV both play as they are, from the resume point", async () => {
+    addDen(true);
+    const r = await play("den", "m1");
+    assert.equal(r.body.value.method, "direct");
+    assert.match(last().url, /stream.mp4?/);
+    assert.equal(last().startAt, 600);
+    assert.equal(lastPlaybackInfo().MaxStreamingBitrate, 80_000_000);
+    const dp = lastPlaybackInfo().DeviceProfile as { Name: string; DirectPlayProfiles: { Container: string; VideoCodec: string; AudioCodec: string }[] };
+    assert.equal(dp.Name, "Venuebox app");
+    assert.deepEqual(dp.DirectPlayProfiles[0], { Type: "Video", Container: "mp4,mkv", VideoCodec: "h264,hevc", AudioCodec: "aac,ac3,eac3" });
+    assert.equal((await play("den", "m2")).body.value.method, "direct");
+    assert.equal(last().mime, "video/x-matroska");
+    const tv = (await state()).tvs.find((x) => x.displayId === "den")!;
+    assert.equal(tv.canSeek, true);
+    assert.equal(tv.profile, "venuebox");
+    assert.equal(tv.profileLabel, "Venuebox app");
+    assert.equal(tv.maxMbps, 80);
+    assert.equal(tv.maxHeight, 2160);
+    const c = await t.api("POST", "/api/admin/tvs/den/control", { action: "forward" });
+    assert.equal(c.status, 200);
+    assert.equal(typeof (t.tvs.controls.at(-1)!.action as { seek: number }).seek, "number");
+  });
+
+  test("Venuebox app that can't seek: no resume point, no skipping", async () => {
+    addDen(false);
+    await play("den", "m1");
+    assert.equal(last().startAt, undefined);
+    assert.equal((await state()).tvs.find((x) => x.displayId === "den")!.canSeek, false);
+    const r = await t.api<{ error: string }>("POST", "/api/admin/tvs/den/control", { action: "back" });
+    assert.equal(r.status, 409);
+    assert.equal(t.tvs.controls.length, 0);
+  });
+
+  test("Venuebox app with 4K off: HLS at 1080p", async () => {
+    addDen(true);
+    await t.api("PUT", "/api/admin/tvs/den", { allow4k: false });
+    assert.equal((await play("den", "m1")).body.value.method, "transcode");
+    assert.match(last().url, /SegmentContainer=mp4/, "HEVC HLS in fMP4 segments");
   });
 
   test("the box asks for Apple TV video pairing: staff are told how", async () => {

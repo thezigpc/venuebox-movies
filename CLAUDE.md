@@ -45,7 +45,7 @@ doubletake or screen capture for movies.
     always on screen;
   - `pages/AdminPage.tsx`: settings.
 
-## Platform contract (agreed with GameBroker 2026-11-21: box 0.27.0, SDK 0.17.0)
+## Platform contract (agreed with GameBroker 2026-11-21: box 0.27.0 / SDK 0.17.0; Venuebox apps box 0.28.0 / SDK 0.18.0)
 - `playVideo(displayId, { url, mime, title, poster?, startAt? })`, `videoControl(…,
   "pause"|"resume"|"stop"|{ seek })`, `videoStatus` → `{ state, position?, duration?,
   message? }`.
@@ -54,9 +54,15 @@ doubletake or screen capture for movies.
   second PIN in the box admin).
 - `bg.tvs()[].video: { kind, model }`. Roku model = ECP number (3930X); Apple TV = pyatv
   model_str.
+- SDK 0.18.0: `video.kind: "venuebox"` with `formats { containers, video, audio, maxHeight?, seek,
+  passthrough? }` (Jellyfin's lower-case names; "hls" in containers isn't a file container).
+  The profile is built from it (`profileFromFormats` in profiles.ts); `seek` decides
+  `canSeek` (video.ts). Absent for Apple TVs and Rokus.
+- Subtitles: none shown, none burned in. The device profile declares them as embedded, and
+  `withoutBurnedSubtitles` (jellyfin.ts) removes Jellyfin's own pick from HLS links.
 - Events: standard `video_started { tv, title }` / `video_stopped { tv }`.
-- Vendored SDK 0.17.0 (Movies 0.1.1). Still to do: test on a real Apple TV and Roku at the
-  venue once box 0.27.0 is there, with the user at the TV for the AirPlay PIN.
+- Vendored SDK 0.18.0 (Movies 0.2.0). Installed on the venue box (0.1.1). **No live testing
+  on the venue's TVs until the user says so.**
 
 ## Conventions
 - npm workspaces (`shared`, `server`, `client`), TypeScript, Express 4, React 18 + Vite 5,

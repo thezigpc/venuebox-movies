@@ -125,6 +125,8 @@ describe("box video adapter", () => {
       { id: "airplay:1", name: "Bar", kind: "airplay", online: true, canLaunch: [], video: { kind: "appletv", model: "AppleTV4KGen3" } },
       { id: "roku:2", name: "Patio", kind: "roku", online: true, canLaunch: [], video: { kind: "roku", model: "3930X" } },
       { id: "cast:3", name: "Browser TV", kind: "chromecast", online: true, canLaunch: [] },
+      { id: "vb:4", name: "Den", kind: "venuebox", online: true, canLaunch: [], video: { kind: "venuebox", model: "Android TV", formats: { containers: ["mkv", "hls"], video: ["hevc"], audio: ["eac3"], maxHeight: 2160, seek: true } } },
+      { id: "vb:5", name: "Odd", kind: "venuebox", online: true, canLaunch: [], video: { kind: "venuebox", model: "PC", formats: { containers: "mkv" } } },
     ];
     // bg.tvs() is gated on the manifest's media field by the box; our fake core answers anyway.
     const v = createBoxVideo(bg);
@@ -133,7 +135,12 @@ describe("box video adapter", () => {
     assert.deepEqual(tvs.map((x) => [x.id, x.kind, x.model]), [
       ["airplay:1", "appletv", "AppleTV4KGen3"],
       ["roku:2", "roku", "3930X"],
+      ["vb:4", "venuebox", "Android TV"],
+      ["vb:5", "venuebox", "PC"],
     ]);
+    assert.deepEqual(tvs[2]!.formats, { containers: ["mkv", "hls"], video: ["hevc"], audio: ["eac3"], maxHeight: 2160, seek: true });
+    assert.equal(tvs[3]!.formats, undefined, "malformed formats are dropped (the TV gets the safe profile)");
+    assert.equal(tvs[0]!.formats, undefined);
     await v.play("roku:2", { url: "http://m/x", title: "T" });
     await v.control("roku:2", { seek: 10 });
     assert.deepEqual(await v.status("roku:2"), { state: "playing", position: 3 });
