@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.1 (2026-11-21)
+- Fix: the guest vote's cap of 6 voters per network address would have blocked most of the
+  room, because everyone on the venue's Wi-Fi arrives from the venue's one address. In the
+  building (the box's `access` is "venue-ip" or "local") there's no cap on people, only a
+  limit of 30 new voters a minute to stop a script. From outside the venue the cap stays.
+
 ## 0.5.0 (2026-11-21)
 - **A new staff page**, at `/staff` (routes.host), laid out per device:
   - phone: the list, a mini player bar, and a full-screen remote;
@@ -14,7 +20,8 @@
 - **Guest vote.** Staff put up to 8 movies in a vote, from the library or typed in.
   - It closes after a set time, when the TV's movie ends, or when staff close it.
   - The winner starts by itself when the TV is free, or waits for "Play now".
-  - One vote per browser, changeable; at most 6 voters per network address.
+  - One vote per browser, changeable; at most 6 voters per network address (changed in
+    0.5.1).
   - Kept in memory: an app restart ends a vote.
 - **Works with no media server.** Staff type a "Playing tonight" list for guests, and typed
   movies can go in a vote. A typed winner is announced for staff to put on.

@@ -1,6 +1,8 @@
 // The guest vote: staff pick a few movies, guests vote on the public page, and the winner goes
 // on a TV. One vote at a time, kept in memory (an app restart ends it). Guests are counted by
-// an id their browser keeps, with a cap per network address so one phone can't flood it.
+// an id their browser keeps. Everyone on the venue's Wi-Fi arrives from one address, so in the
+// building only a script is slowed down (new voters per minute); from outside the venue, a
+// few voters per address.
 
 import type { ItemDetail, VoteCloses, VoteOption, VotePublic, VoteStaff } from "@movies/shared";
 import { randomUUID } from "node:crypto";
@@ -26,7 +28,10 @@ export interface VoteDeps {
 
 export const MAX_OPTIONS = 8;
 const MAX_VOTERS = 5000;
+/** Outside the venue: voters per network address. */
 const MAX_PER_ADDRESS = 6;
+/** In the venue (one shared address): new voters per minute, to stop a script, not people. */
+const MAX_NEW_PER_MINUTE = 30;
 const VOTER_ID = /^[A-Za-z0-9_-]{16,64}$/;
 
 export class Vote {
@@ -38,6 +43,7 @@ export class Vote {
   private autoPlay = true;
   private votes = new Map<string, string>();
   private perAddress = new Map<string, Set<string>>();
+  private recent = new Map<string, number[]>();
   /** The winner of the last round, waiting to go on (or for staff to start it). */
   private winner: { itemId: string; title: string; displayId?: string; votes: number; manual?: boolean } | undefined;
   private note: string | undefined;
@@ -85,6 +91,7 @@ export class Vote {
     this.autoPlay = o.autoPlay;
     this.votes.clear();
     this.perAddress.clear();
+    this.recent.clear();
     this.winner = undefined;
     this.note = undefined;
     this.open = true;
@@ -136,6 +143,7 @@ export class Vote {
     this.closesAt = undefined;
     this.votes.clear();
     this.perAddress.clear();
+    this.recent.clear();
     this.winner = undefined;
     this.note = undefined;
   }
@@ -155,14 +163,21 @@ export class Vote {
 
   // ---------------------------------------------------------------- guests
 
-  cast(voter: unknown, itemId: unknown, address: string): void {
+  /** inVenue: the box says this guest is in the building (its Wi-Fi or local network). */
+  cast(voter: unknown, itemId: unknown, address: string, inVenue = false): void {
     if (!this.open) throw new VoteError("The vote is closed.");
     if (typeof voter !== "string" || !VOTER_ID.test(voter)) throw new VoteError("That vote didn't come through. Reload the page and try again.", 400);
     if (typeof itemId !== "string" || !this.options.some((o) => o.itemId === itemId)) throw new VoteError("That movie isn't in the vote.", 400);
     if (!this.votes.has(voter)) {
       if (this.votes.size >= MAX_VOTERS) throw new VoteError("The vote is full.", 429);
       const ids = this.perAddress.get(address) ?? new Set<string>();
-      if (ids.size >= MAX_PER_ADDRESS) throw new VoteError("Too many votes from this connection already.", 429);
+      if (inVenue) {
+        const since = this.now() - 60_000;
+        const times = (this.recent.get(address) ?? []).filter((t) => t > since);
+        if (times.length >= MAX_NEW_PER_MINUTE) throw new VoteError("Lots of votes are coming in. Try again in a minute.", 429);
+        times.push(this.now());
+        this.recent.set(address, times);
+      } else if (ids.size >= MAX_PER_ADDRESS) throw new VoteError("Too many votes from this connection already.", 429);
       ids.add(voter);
       this.perAddress.set(address, ids);
     }

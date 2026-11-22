@@ -272,7 +272,9 @@ export async function createApp(o: AppOptions): Promise<MoviesApp> {
     res.set("Cache-Control", "no-store");
     const b = (req.body ?? {}) as Record<string, unknown>;
     try {
-      vote.cast(b.voter, b.itemId, bg.clientIp(req) ?? "unknown");
+      // In the building, every guest shares the venue's one address (the box tells us who is).
+      const access = bg.gateway(req).access;
+      vote.cast(b.voter, b.itemId, bg.clientIp(req) ?? "unknown", access === "venue-ip" || access === "local");
       res.json({ ok: true, value: publicState(typeof b.voter === "string" ? b.voter : undefined) });
     } catch (err) {
       if (err instanceof VoteError) return void res.status(err.status).json({ ok: false, error: err.message });

@@ -1,4 +1,4 @@
-# Bar Games integration report: Movies 0.5.0
+# Bar Games integration report: Movies 0.5.1
 
 - **Level:** 3, an app and a media provider.
 - **SDK:** 0.19.0.
@@ -129,7 +129,8 @@ Verified on the 0.19.0 mock box (fake-den) against the real Jellyfin:
 
 - `/api/public/state` and `/api/public/vote` need no sign-in. They carry titles, progress,
   signed poster paths and vote counts only.
-- A vote is in memory. Voters are a random id per browser, capped at 6 per network address.
+- A vote is in memory. Voters are a random id per browser. In the venue (`bg.gateway(req).access`
+  "venue-ip" or "local"): no cap per address, 30 new voters a minute. Outside: 6 per address.
 - With no media server: tonight's list (`settings.json`) and typed vote options.
 - Checked in headless Edge on the 0.19.0 mock box with the real Jellyfin: the phone, iPad
   portrait and iPad landscape layouts, the full remote, the details sheet, the vote sheet,

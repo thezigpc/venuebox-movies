@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { Card, ItemDetail, Library, Page, PublicState, StaffState } from "@movies/shared";
+import { Vote } from "../src/vote.js";
 import { connect, fakeJellyfin, PASSWORD, startApp, TOKEN, USER, type FakeJellyfin, type TestApp } from "./fakes.js";
 
 // Every log line any test produces: none may carry the token.
@@ -686,7 +687,26 @@ describe("guest page and vote", () => {
     assert.equal((await state()).vote.options.length, 0);
   });
 
-  test("one connection can't flood the vote", async () => {
+  test("in the venue everyone shares one address: no cap on people, only on a burst", () => {
+    let now = 1_000_000;
+    const v = new Vote({ now: () => now, tvName: () => "TV", isPlaying: () => false, play: async () => undefined });
+    v.addManual("A");
+    v.addManual("B");
+    v.start({ closes: "manual", autoPlay: false });
+    const a = v.staffView().options[0]!.itemId;
+    const id = (i: number) => `voter-${String(i).padStart(16, "0")}`;
+    for (let i = 0; i < 30; i++) v.cast(id(i), a, "203.0.113.5", true);
+    assert.throws(() => v.cast(id(30), a, "203.0.113.5", true), /Try again in a minute/);
+    v.cast(id(3), a, "203.0.113.5", true); // someone who already voted can still change it
+    now += 61_000;
+    for (let i = 30; i < 50; i++) v.cast(id(i), a, "203.0.113.5", true);
+    assert.equal(v.staffView().total, 50);
+    // From outside the venue the cap per address stays.
+    for (let i = 100; i < 106; i++) v.cast(id(i), a, "198.51.100.9", false);
+    assert.throws(() => v.cast(id(106), a, "198.51.100.9", false), /Too many votes/);
+  });
+
+  test("one connection from outside the venue can't flood the vote", async () => {
     await add("m1");
     await add("m2");
     await t.api("POST", "/api/admin/vote/open", { displayId: "atv", closes: "manual" });
