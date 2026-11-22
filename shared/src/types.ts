@@ -231,6 +231,8 @@ export interface PublicState {
   /** Typed in by staff. */
   tonight: TonightEntry[];
   vote: VotePublic | null;
+  /** The box vouches for this visitor as staff: show them the way to the staff page. */
+  staff?: boolean;
 }
 
 export interface StaffState {

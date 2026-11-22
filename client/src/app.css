@@ -853,3 +853,14 @@
   gap: 6px;
   white-space: nowrap;
 }
+
+.guest-staff {
+  margin: 10px 16px 0;
+  padding: 12px;
+  border-radius: 14px;
+  background: var(--surface);
+  border: 1px solid var(--primary);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}

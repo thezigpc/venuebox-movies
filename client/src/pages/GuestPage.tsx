@@ -89,6 +89,19 @@ export function GuestPage() {
         {venue?.venue?.name ? <span className="muted small">{venue.venue.name}</span> : null}
         <h1>{state?.name ?? "Movies"}</h1>
       </header>
+      {state?.staff && (
+        <div className="guest-staff">
+          <span className="small">You're signed in to the box as staff. This is the page guests see.</span>
+          <div className="mv-two">
+            <a className="button primary" href={bgUrl("/staff")}>
+              Staff controls
+            </a>
+            <a className="button" href={bgUrl("/admin")}>
+              Settings
+            </a>
+          </div>
+        </div>
+      )}
       {!state && !offline && <p className="muted pad">Loading…</p>}
       {offline && <p className="error pad">Can't reach the app right now. It will try again by itself.</p>}
 
@@ -191,7 +204,7 @@ export function GuestPage() {
         </main>
       )}
       <footer className="guest-foot muted small">
-        The staff choose what plays. <a href={bgUrl("/staff")}>Staff</a>
+        The staff choose what plays. <a href={bgUrl("/staff")}>Staff sign-in</a>
       </footer>
     </div>
   );

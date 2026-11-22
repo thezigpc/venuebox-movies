@@ -100,6 +100,20 @@ describe("box commands", () => {
   });
 });
 
+describe("the guest page for staff", () => {
+  test("the box vouches for staff: the guest page offers the staff page; guests aren't told", async () => {
+    const guest = (await (await fetch(t.url + "/api/public/state")).json()) as { staff?: boolean };
+    assert.equal(guest.staff, undefined);
+    const staff = (await (await fetch(t.url + "/api/public/state", { headers: { "x-bargames-via": "1", "x-bargames-staff": "1" } })).json()) as { staff?: boolean };
+    assert.equal(staff.staff, true);
+    // And /staff's sign-in needs no password for them.
+    const status = (await (await fetch(t.url + "/api/admin/status", { headers: { "x-bargames-via": "1", "x-bargames-staff": "1" } })).json()) as { trusted: boolean };
+    assert.equal(status.trusted, true);
+    const trusted = await fetch(t.url + "/api/admin/trusted", { method: "POST", headers: { "x-bargames-via": "1", "x-bargames-staff": "1" } });
+    assert.equal(trusted.status, 200);
+  });
+});
+
 describe("box video adapter", () => {
   test("a box before 0.27.0 (no video on its TVs): nothing is listed", async () => {
     const bg = makeBarGames({ defaultName: "Movies", coreUrl: core.url, token: CORE_TOKEN });

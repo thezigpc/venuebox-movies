@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.2 (2026-11-21)
+- Staff who open the app land on the guest page (the app's main address). When the box
+  vouches for them, that page now shows "Staff controls" (to `/staff`, no password) and
+  "Settings". Guests don't see it; their footer link reads "Staff sign-in".
+
 ## 0.5.1 (2026-11-21)
 - Fix: the guest vote's cap of 6 voters per network address would have blocked most of the
   room, because everyone on the venue's Wi-Fi arrives from the venue's one address. In the

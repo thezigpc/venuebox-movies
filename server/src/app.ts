@@ -170,7 +170,7 @@ export async function createApp(o: AppOptions): Promise<MoviesApp> {
   }
 
   /** What guests may see: titles and progress on the TVs, and the vote. Never a link. */
-  function publicState(voter?: string): PublicState {
+  function publicState(voter?: string, staff = false): PublicState {
     const playing: PublicState["playing"] = [];
     for (const t of player.cachedTvs()) {
       const n = player.nowPlaying(t.id);
@@ -186,7 +186,7 @@ export async function createApp(o: AppOptions): Promise<MoviesApp> {
         ...(left != null && n.state === "playing" ? { endsInSec: left } : {}),
       });
     }
-    return { name: cachedName, playing, tonight: store.settings.tonight, vote: vote.publicView(voter) };
+    return { name: cachedName, playing, tonight: store.settings.tonight, vote: vote.publicView(voter), ...(staff ? { staff: true } : {}) };
   }
 
   /** Runs a test; on a certificate the box doesn't trust, reads it so staff can pin it. */
@@ -266,7 +266,7 @@ export async function createApp(o: AppOptions): Promise<MoviesApp> {
   // ---- the guest page (no sign-in): what's on, and voting
   app.get("/api/public/state", (req, res) => {
     res.set("Cache-Control", "no-store");
-    res.json(publicState(str(req.query.voter, 64) || undefined));
+    res.json(publicState(str(req.query.voter, 64) || undefined, bg.isStaff(req)));
   });
   app.post("/api/public/vote", express.json({ limit: "2kb" }), (req, res) => {
     res.set("Cache-Control", "no-store");
@@ -275,7 +275,7 @@ export async function createApp(o: AppOptions): Promise<MoviesApp> {
       // In the building, every guest shares the venue's one address (the box tells us who is).
       const access = bg.gateway(req).access;
       vote.cast(b.voter, b.itemId, bg.clientIp(req) ?? "unknown", access === "venue-ip" || access === "local");
-      res.json({ ok: true, value: publicState(typeof b.voter === "string" ? b.voter : undefined) });
+      res.json({ ok: true, value: publicState(typeof b.voter === "string" ? b.voter : undefined, bg.isStaff(req)) });
     } catch (err) {
       if (err instanceof VoteError) return void res.status(err.status).json({ ok: false, error: err.message });
       throw err;
