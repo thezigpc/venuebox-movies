@@ -1,17 +1,18 @@
-# Bar Games integration report: Movies 0.2.0
+# Bar Games integration report: Movies 0.2.1
 
 - **Level:** 3, an app and a media provider.
-- **SDK:** 0.18.0.
+- **SDK:** 0.18.1.
   - Box 0.27.0: `bg.playVideo` / `videoControl` / `videoStatus`, `bg.tvs()[].video`, and
     the standard `video_started` / `video_stopped` events.
   - Box 0.28.0: Venuebox apps, `video: { kind: "venuebox", model, formats }`.
+  - Box 0.28.1: `formats.ranges`.
 - **GameKit:** 0.10.6.
 - **Manifest:**
   - `id: movies`, port 3017, `routing.basePath: true`, `network.internet: true`;
   - routes `player`/`host` `/` (the staff picker; staff sign-in) and `admin` `/admin`;
   - `media: { launch: [] }` and `video: { play: true }`.
 
-## Checks (mock box, SDK 0.18.0, `--base /movies`, the real Jellyfin, the mock box's video TVs)
+## Checks (mock box, SDK 0.18.0 and 0.18.1, `--base /movies`, the real Jellyfin, the mock box's video TVs)
 
 ```
 ✓ health /health → 200
@@ -41,8 +42,8 @@ On the same mock box:
 - **Direct:** the containers it lists ("hls" aside), its video codecs, its audio plus
   passthrough, up to `maxHeight` (2160 when absent).
 - **Otherwise HLS:** HEVC in fMP4 if it lists HEVC, else H.264 in TS.
-- **HDR:** the formats don't say. A 4K player with HEVC/AV1 is taken to show HDR10, HDR10+
-  and HLG; Dolby Vision only if it lists "dovi".
+- **HDR:** `formats.ranges` ("sdr" "hdr10" "hdr10plus" "hlg" "dovi" → Jellyfin's SDR, HDR10,
+  HDR10Plus, HLG, DOVI). None listed: SDR only.
 - **Bitrate:** 80 Mbit/s at 4K, 40 at 1080p, 20 below, lowered by the per-TV cap; "allow
   4K" applies.
 - **`seek`:** decides ±30 s and resume points.
@@ -121,8 +122,7 @@ The brief named them `movie_started` / `movie_stopped`. GameBroker asked for the
 4. `media.launch: []` as a media provider [already works].
 5. Standard events `video_started` / `video_stopped` [done, SDK 0.17.0].
 6. Mock box: fake Apple TV and Roku video TVs [done]; fake-den [done, SDK 0.18.0].
-7. Proposed: `formats.ranges` (e.g. ["SDR", "HDR10", "HLG", "DOVI"]), so HDR is known instead
-   of guessed from 4K + HEVC.
+7. `formats.ranges` [done, SDK 0.18.1].
 8. Later:
    - a `media_search { q }` command, so a scene can pick one movie;
    - `routes.player` optional for staff-only apps (the validator requires it today, so it's

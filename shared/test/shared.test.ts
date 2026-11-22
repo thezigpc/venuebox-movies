@@ -167,7 +167,7 @@ test("redact: leaves ordinary text alone", () => {
 
 // ------------------------------------------------------------------ Venuebox apps (SDK 0.18.0)
 
-const den: TvFormats = { containers: ["mp4", "mkv", "hls"], video: ["h264", "hevc"], audio: ["aac", "ac3", "eac3"], maxHeight: 2160, seek: true, passthrough: ["truehd"] };
+const den: TvFormats = { containers: ["mp4", "mkv", "hls"], video: ["h264", "hevc"], audio: ["aac", "ac3", "eac3"], maxHeight: 2160, seek: true, passthrough: ["truehd"], ranges: ["sdr", "hdr10", "hlg"] };
 
 test("venuebox: profile from the TV's formats", () => {
   assert.equal(profileFor({ kind: "venuebox", model: "Android TV" }), "venuebox");
@@ -178,7 +178,7 @@ test("venuebox: profile from the TV's formats", () => {
   assert.equal(p.maxHeight, 2160);
   assert.equal(p.maxWidth, 3840);
   assert.deepEqual(p.hls, { segment: "mp4", videoCodecs: ["hevc", "h264"] });
-  assert.ok(p.videoRanges.includes("HDR10") && !p.videoRanges.includes("DOVI"));
+  assert.deepEqual(p.videoRanges, ["SDR", "HDR10", "HLG"]);
   // A 4K HDR10 HEVC MKV with EAC3 plays as it is; DTS doesn't.
   const file = { container: "mkv", video: { codec: "hevc", width: 3840, height: 2160, range: "HDR10" }, audio: { codec: "eac3", channels: 6 }, bitrate: 50_000_000 };
   assert.deepEqual(canDirectPlay(p, file), { ok: true });
@@ -194,6 +194,20 @@ test("venuebox: an H.264-only 1080p player gets TS HLS and no HDR", () => {
   assert.deepEqual(p.videoRanges, ["SDR"]);
   assert.deepEqual(p.audioCodecs, ["aac"], "no audio listed: the safe one");
   assert.equal(p.maxBitrate, 40_000_000);
+});
+
+test("venuebox: HDR only as its ranges say (SDK 0.18.1)", () => {
+  const file = { container: "mkv", video: { codec: "hevc", width: 3840, height: 2160, range: "HDR10" }, audio: { codec: "eac3", channels: 6 } };
+  // No ranges: SDR, even on a 4K HEVC player (the server tone-maps).
+  const { ranges: _, ...noRanges } = den;
+  const sdr = profileFromFormats(noRanges);
+  assert.deepEqual(sdr.videoRanges, ["SDR"]);
+  const r = canDirectPlay(sdr, file);
+  assert.ok(!r.ok && r.reasons.includes("HDR10 video"));
+  // Every name maps to Jellyfin's; unknown ones are ignored.
+  assert.deepEqual(profileFromFormats({ ...den, ranges: ["HDR10Plus", "dovi", "hlg", "sdr", "weird"] }).videoRanges, ["SDR", "HDR10Plus", "DOVI", "HLG"]);
+  const dv = canDirectPlay(profileFromFormats({ ...den, ranges: ["sdr", "dovi"] }), { ...file, video: { ...file.video, range: "DOVIWithHDR10" } });
+  assert.deepEqual(dv, { ok: true });
 });
 
 test("venuebox: settings apply; no formats falls back; not offered by hand", () => {

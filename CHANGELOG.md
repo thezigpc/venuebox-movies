@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.1 (2026-11-21)
+- SDK 0.18.1 (box 0.28.1): a Venuebox app's `formats.ranges` decides HDR.
+  - "sdr" "hdr10" "hdr10plus" "hlg" "dovi" map to Jellyfin's ranges.
+  - With no ranges listed, SDR only: HDR isn't guessed from 4K + HEVC any more, and the
+    server tone-maps HDR files.
+
 ## 0.2.0 (2026-11-21)
 - **Venuebox apps** (SDK 0.18.0, box 0.28.0): Android/Google TV and PC players.
   - A TV with `video.kind: "venuebox"` gets a profile built from the formats it reports.

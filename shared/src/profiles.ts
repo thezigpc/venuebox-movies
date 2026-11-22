@@ -115,7 +115,11 @@ export interface TvFormats {
   seek: boolean;
   /** Audio it sends on to a receiver as it is (it plays those too). */
   passthrough?: string[];
+  /** Picture ranges it shows correctly: "sdr" "hdr10" "hdr10plus" "hlg" "dovi" (SDK 0.18.1). Absent: SDR only. */
+  ranges?: string[];
 }
+
+const RANGE_NAMES: Record<string, string> = { sdr: "SDR", hdr10: "HDR10", hdr10plus: "HDR10Plus", "hdr10+": "HDR10Plus", hlg: "HLG", dovi: "DOVI", dolbyvision: "DOVI" };
 
 const lower = (xs: unknown): string[] => (Array.isArray(xs) ? xs.filter((x): x is string => typeof x === "string").map((x) => x.trim().toLowerCase()).filter(Boolean) : []);
 const CODEC_ALIAS: Record<string, string> = { avc: "h264", h265: "hevc", hevc: "hevc", h264: "h264" };
@@ -123,8 +127,7 @@ const CODEC_ALIAS: Record<string, string> = { avc: "h264", h265: "hevc", hevc: "
 /**
  * A Venuebox TV's profile, from the formats it reports. Direct play when the file fits them;
  * otherwise the server's HLS in the best codec it lists (HEVC in fMP4 segments, else H.264 in
- * TS). HDR: the formats don't list ranges, so a 4K player with HEVC/AV1 is taken to show HDR10
- * and HLG (its player tone-maps when the screen can't), Dolby Vision only if it lists "dovi".
+ * TS). HDR only as its ranges list it; none listed means SDR (the server tone-maps HDR files).
  */
 export function profileFromFormats(f: TvFormats): TvProfile {
   const video = [...new Set(lower(f.video).map((c) => CODEC_ALIAS[c] ?? c))];
@@ -132,15 +135,13 @@ export function profileFromFormats(f: TvFormats): TvProfile {
   const containers = lower(f.containers).filter((c) => c !== "hls" && c !== "m3u8");
   const maxHeight = typeof f.maxHeight === "number" && f.maxHeight >= 240 ? Math.round(f.maxHeight) : 2160;
   const hlsCodecs = ["hevc", "h264"].filter((c) => video.includes(c));
-  const ranges = ["SDR"];
-  if (maxHeight >= 2160 && video.some((c) => c === "hevc" || c === "av1")) ranges.push("HDR10", "HDR10Plus", "HLG");
-  if (video.includes("dovi")) ranges.push("DOVI");
+  const ranges = [...new Set(["SDR", ...lower(f.ranges).flatMap((r) => (RANGE_NAMES[r] ? [RANGE_NAMES[r]] : []))])];
   return {
     id: "venuebox",
     label: "Venuebox app",
     maxWidth: Math.round((maxHeight * 16) / 9),
     maxHeight,
-    videoCodecs: video.filter((c) => c !== "dovi").length ? video.filter((c) => c !== "dovi") : ["h264"],
+    videoCodecs: video.length ? video : ["h264"],
     videoRanges: ranges,
     directContainers: containers,
     hls: hlsCodecs.includes("hevc") ? { segment: "mp4", videoCodecs: hlsCodecs } : { segment: "ts", videoCodecs: ["h264"] },

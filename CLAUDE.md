@@ -55,13 +55,14 @@ doubletake or screen capture for movies.
 - `bg.tvs()[].video: { kind, model }`. Roku model = ECP number (3930X); Apple TV = pyatv
   model_str.
 - SDK 0.18.0: `video.kind: "venuebox"` with `formats { containers, video, audio, maxHeight?, seek,
-  passthrough? }` (Jellyfin's lower-case names; "hls" in containers isn't a file container).
+  passthrough?, ranges? }` (Jellyfin's lower-case names; "hls" in containers isn't a file
+  container; ranges absent = SDR only, SDK 0.18.1).
   The profile is built from it (`profileFromFormats` in profiles.ts); `seek` decides
   `canSeek` (video.ts). Absent for Apple TVs and Rokus.
 - Subtitles: none shown, none burned in. The device profile declares them as embedded, and
   `withoutBurnedSubtitles` (jellyfin.ts) removes Jellyfin's own pick from HLS links.
 - Events: standard `video_started { tv, title }` / `video_stopped { tv }`.
-- Vendored SDK 0.18.0 (Movies 0.2.0). Installed on the venue box (0.1.1). **No live testing
+- Vendored SDK 0.18.1 (Movies 0.2.1). Installed on the venue box (0.1.1). **No live testing
   on the venue's TVs until the user says so.**
 
 ## Conventions

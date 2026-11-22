@@ -315,7 +315,7 @@ describe("playing", () => {
   });
 
   const addDen = (seek: boolean) =>
-    t.tvs.list.push({ id: "den", name: "Den TV", kind: "venuebox", model: "Android TV 4K", online: true, formats: { containers: ["mp4", "mkv", "hls"], video: ["h264", "hevc"], audio: ["aac", "ac3", "eac3"], maxHeight: 2160, seek } });
+    t.tvs.list.push({ id: "den", name: "Den TV", kind: "venuebox", model: "Android TV 4K", online: true, formats: { containers: ["mp4", "mkv", "hls"], video: ["h264", "hevc"], audio: ["aac", "ac3", "eac3"], maxHeight: 2160, seek, ranges: ["sdr", "hdr10"] } });
 
   test("Venuebox app: its formats decide; a 4K HEVC MP4 and an H.264 MKV both play as they are, from the resume point", async () => {
     addDen(true);

@@ -39,7 +39,7 @@ function readFormats(f: unknown): TvFormats | undefined {
   const list = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : null);
   const containers = list(o.containers), video = list(o.video), audio = list(o.audio);
   if (!containers || !video || !audio) return undefined;
-  const passthrough = list(o.passthrough);
+  const passthrough = list(o.passthrough), ranges = list(o.ranges);
   return {
     containers,
     video,
@@ -47,6 +47,7 @@ function readFormats(f: unknown): TvFormats | undefined {
     ...(typeof o.maxHeight === "number" && Number.isFinite(o.maxHeight) ? { maxHeight: o.maxHeight } : {}),
     seek: o.seek === true,
     ...(passthrough ? { passthrough } : {}),
+    ...(ranges ? { ranges } : {}),
   };
 }
 
@@ -123,7 +124,7 @@ export function createFakeVideo(opts: { http: Http; now?: () => number; probe?: 
       kind: "venuebox",
       model: "Android TV 4K",
       online: true,
-      formats: { containers: ["mp4", "mkv", "webm", "hls"], video: ["h264", "hevc", "vp9", "av1"], audio: ["aac", "ac3", "eac3", "opus", "flac", "mp3"], maxHeight: 2160, seek: true, passthrough: ["ac3", "eac3"] },
+      formats: { containers: ["mp4", "mkv", "webm", "hls"], video: ["h264", "hevc", "vp9", "av1"], audio: ["aac", "ac3", "eac3", "opus", "flac", "mp3"], maxHeight: 2160, seek: true, passthrough: ["ac3", "eac3"], ranges: ["sdr", "hdr10", "hlg"] },
     },
     { id: "fake-other", name: "Fake other TV", kind: "chromecast", online: true },
   ];
