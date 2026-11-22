@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 // The HTTP app: the staff picker's API (browse, search, play, now playing), the settings API
 // (server address, certificate, sign-in, per-TV settings), signed poster links and the built
 // client. Built by a function, so tests run it in-process with a fake Jellyfin and fake TVs.
@@ -7,7 +8,7 @@ import path from "node:path";
 import express, { type NextFunction, type Request, type Response } from "express";
 import type { BarGames } from "@bargames/sdk/server";
 import { adminRouter, createAdminAuth, createJsonStore, serveSpa, type AdminAuth } from "@bargames/gamekit/server";
-import { canDirectPlay, DEFAULT_NAME, isProfileId, normaliseServerUrl, type AdminState, type CertOffer, type ServerStatus, type StaffState, type TestResult, type TrackChoice } from "@movies/shared";
+import { canDirectPlay, DEFAULT_NAME, isProfileId, normaliseServerUrl, type AdminState, type CertOffer, type ServerStatus, type PublicState, type StaffState, type TestResult, type TrackChoice } from "@movies/shared";
 import { venueName } from "./bargames.js";
 import { VERSION } from "./config.js";
 import { createHttp, normaliseFingerprint, probeCertificate, type Http } from "./http.js";
@@ -18,6 +19,7 @@ import { checkPosterSig, PosterCache, posterPath, POSTER_WIDTHS } from "./poster
 import { JellyfinSource } from "./sources/jellyfin.js";
 import { SourceError, type MediaSource } from "./sources/types.js";
 import { Store } from "./store.js";
+import { Vote, VoteError } from "./vote.js";
 import { createBoxVideo, createFakeVideo, type VideoOut } from "./video.js";
 
 export interface AppOptions {
@@ -110,7 +112,17 @@ export async function createApp(o: AppOptions): Promise<MoviesApp> {
     emit: (type, data) => bg.emit({ type, data }),
     now: o.now,
     pollMs: o.pollMs,
+    onFinished: (displayId) => vote.finished(displayId),
   });
+  // The guest vote: the winner goes on through the same player as a staff pick.
+  const vote: Vote = new Vote({
+    now: o.now,
+    tvName: (id) => player.cachedTvs().find((t) => t.id === id)?.name,
+    isPlaying: (id) => player.nowPlaying(id) != null && player.nowPlaying(id)!.state !== "error",
+    play: (displayId, itemId) => player.play(displayId, itemId, { resume: false }),
+  });
+  const voteTimer = setInterval(() => void vote.tick(), 2000);
+  voteTimer.unref();
   player.start();
   void player.tvs(true);
   registerMedia({ bg, player, source, ready });
@@ -152,7 +164,29 @@ export async function createApp(o: AppOptions): Promise<MoviesApp> {
       server: serverStatus(),
       tvs: tvs.map((t) => player.info(t)),
       video: { problem: video.problem(), fake: video.fake },
+      vote: vote.staffView(),
+      tonight: store.settings.tonight,
     };
+  }
+
+  /** What guests may see: titles and progress on the TVs, and the vote. Never a link. */
+  function publicState(voter?: string): PublicState {
+    const playing: PublicState["playing"] = [];
+    for (const t of player.cachedTvs()) {
+      const n = player.nowPlaying(t.id);
+      if (!n || n.state === "error" || n.state === "idle" || n.state === "offline") continue;
+      const left = n.durationSec ? Math.max(0, n.durationSec - n.positionSec) : undefined;
+      playing.push({
+        tv: t.name,
+        title: n.title,
+        ...(n.subtitle ? { subtitle: n.subtitle } : {}),
+        ...(n.poster ? { poster: n.poster } : {}),
+        paused: n.state === "paused",
+        ...(n.durationSec ? { progress: Math.min(1, n.positionSec / n.durationSec) } : {}),
+        ...(left != null && n.state === "playing" ? { endsInSec: left } : {}),
+      });
+    }
+    return { name: cachedName, playing, tonight: store.settings.tonight, vote: vote.publicView(voter) };
   }
 
   /** Runs a test; on a certificate the box doesn't trust, reads it so staff can pin it. */
@@ -228,6 +262,23 @@ export async function createApp(o: AppOptions): Promise<MoviesApp> {
       res.send(img.body);
     }),
   );
+
+  // ---- the guest page (no sign-in): what's on, and voting
+  app.get("/api/public/state", (req, res) => {
+    res.set("Cache-Control", "no-store");
+    res.json(publicState(str(req.query.voter, 64) || undefined));
+  });
+  app.post("/api/public/vote", express.json({ limit: "2kb" }), (req, res) => {
+    res.set("Cache-Control", "no-store");
+    const b = (req.body ?? {}) as Record<string, unknown>;
+    try {
+      vote.cast(b.voter, b.itemId, bg.clientIp(req) ?? "unknown");
+      res.json({ ok: true, value: publicState(typeof b.voter === "string" ? b.voter : undefined) });
+    } catch (err) {
+      if (err instanceof VoteError) return void res.status(err.status).json({ ok: false, error: err.message });
+      throw err;
+    }
+  });
 
   const admin = adminRouter({ auth, clientIp: (req) => bg.clientIp(req), trusted: (req) => bg.isStaff(req) });
 
@@ -312,6 +363,108 @@ export async function createApp(o: AppOptions): Promise<MoviesApp> {
       if (!action) throw new BadRequest("Unknown control.");
       await player.control(String(req.params.id), action);
       res.json({ ok: true, value: player.nowPlaying(String(req.params.id)) });
+    }),
+  );
+
+  admin.get(
+    "/resume",
+    safe(async (_req, res) => {
+      needReady();
+      res.json({ ok: true, value: await source().resume() });
+    }),
+  );
+
+  // ---- the guest vote (staff side)
+  const voteDone = (res: express.Response) => res.json({ ok: true, value: vote.staffView() });
+  admin.post(
+    "/vote/options",
+    safe(async (req, res) => {
+      const b = (req.body ?? {}) as { itemId?: unknown; title?: unknown };
+      const itemId = str(b.itemId, 200);
+      if (itemId) {
+        needReady();
+        vote.add(await source().item(itemId));
+      } else if (str(b.title, 200)) vote.addManual(str(b.title, 200));
+      else throw new BadRequest("Pick a movie, or type its name.");
+      voteDone(res);
+    }),
+  );
+
+  // ---- "Playing tonight": typed by staff, shown to guests. Works with no media server.
+  const tonightDone = async (res: express.Response) => {
+    await store.saveSettings();
+    res.json({ ok: true, value: store.settings.tonight });
+  };
+  admin.post(
+    "/tonight",
+    safe(async (req, res) => {
+      const b = (req.body ?? {}) as Record<string, unknown>;
+      const title = str(b.title, 120);
+      if (!title) throw new BadRequest("Type the movie's name.");
+      if (store.settings.tonight.length >= 30) throw new BadRequest("The list is full: remove one first.");
+      const when = str(b.when, 60);
+      store.settings.tonight.push({ id: randomUUID(), title, ...(when ? { when } : {}), onNow: b.onNow === true });
+      await tonightDone(res);
+    }),
+  );
+  admin.put(
+    "/tonight/:id",
+    safe(async (req, res) => {
+      const e = store.settings.tonight.find((x) => x.id === req.params.id);
+      if (!e) throw new PlayError("That movie isn't on the list any more.", 404);
+      const b = (req.body ?? {}) as Record<string, unknown>;
+      if (typeof b.onNow === "boolean") e.onNow = b.onNow;
+      if (str(b.title, 120)) e.title = str(b.title, 120);
+      if (typeof b.when === "string") {
+        if (str(b.when, 60)) e.when = str(b.when, 60);
+        else delete e.when;
+      }
+      await tonightDone(res);
+    }),
+  );
+  admin.delete(
+    "/tonight/:id",
+    safe(async (req, res) => {
+      store.settings.tonight = store.settings.tonight.filter((x) => x.id !== req.params.id);
+      await tonightDone(res);
+    }),
+  );
+  admin.delete(
+    "/vote/options/:id",
+    safe(async (req, res) => {
+      vote.remove(String(req.params.id));
+      voteDone(res);
+    }),
+  );
+  admin.post(
+    "/vote/open",
+    safe(async (req, res) => {
+      const b = (req.body ?? {}) as Record<string, unknown>;
+      const closes = b.closes === "time" || b.closes === "movie-end" ? b.closes : "manual";
+      await player.tvs();
+      vote.start({ ...(str(b.displayId, 200) ? { displayId: str(b.displayId, 200) } : {}), closes, ...(Number.isFinite(Number(b.minutes)) ? { minutes: Number(b.minutes) } : {}), autoPlay: b.autoPlay !== false });
+      voteDone(res);
+    }),
+  );
+  admin.post(
+    "/vote/close",
+    safe(async (_req, res) => {
+      await vote.close();
+      voteDone(res);
+    }),
+  );
+  admin.post(
+    "/vote/play",
+    safe(async (_req, res) => {
+      await vote.playWinner();
+      voteDone(res);
+    }),
+  );
+  admin.delete(
+    "/vote",
+    safe(async (_req, res) => {
+      vote.clear();
+      voteDone(res);
     }),
   );
 
@@ -473,7 +626,7 @@ export async function createApp(o: AppOptions): Promise<MoviesApp> {
       noteProblem(err);
       return void res.status(err.status).json({ ok: false, error: err.message });
     }
-    if (err instanceof PlayError || err instanceof BadRequest) return void res.status(err.status).json({ ok: false, error: err.message });
+    if (err instanceof PlayError || err instanceof BadRequest || err instanceof VoteError) return void res.status(err.status).json({ ok: false, error: err.message });
     const status = (err as { status?: number }).status ?? (err as { statusCode?: number }).statusCode ?? 500;
     if (status >= 500) log.error("http", "request failed", { err: String(err) });
     if (!res.headersSent) res.status(status).json({ ok: false, error: status === 404 ? "Not found." : status < 500 ? "Bad request." : "Something went wrong." });
@@ -504,6 +657,7 @@ export async function createApp(o: AppOptions): Promise<MoviesApp> {
     video,
     async close() {
       clearInterval(attentionTimer);
+      clearInterval(voteTimer);
       await player.close();
       auth.close();
     },

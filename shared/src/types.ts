@@ -176,12 +176,71 @@ export interface TestResult {
 /** Why the TVs can't be played on, in words, or null when they can. */
 export type VideoProblem = "standalone" | "box-too-old" | null;
 
+/** When a guest vote closes: after some minutes, when the TV's movie ends, or when staff close it. */
+export type VoteCloses = "time" | "movie-end" | "manual";
+
+/** A movie staff typed in for the guest page ("Playing tonight"): no media server needed. */
+export interface TonightEntry {
+  id: string;
+  title: string;
+  /** When or where, as staff wrote it: "8:00 pm", "Patio TV after the game". */
+  when?: string;
+  /** It's on right now. */
+  onNow: boolean;
+}
+
+export interface VoteOption {
+  itemId: string;
+  title: string;
+  /** Typed in by staff, not from the media server: it can't start on a TV by itself. */
+  manual?: boolean;
+  year?: number;
+  runtimeSec?: number;
+  poster?: string;
+}
+
+/** The vote as guests see it. */
+export interface VotePublic {
+  open: boolean;
+  options: (VoteOption & { votes: number })[];
+  /** How many guests have voted. */
+  total: number;
+  /** The TV the winner plays on. */
+  tvName?: string;
+  closes?: VoteCloses;
+  closesInSec?: number;
+  /** The last round's winner, waiting to go on. */
+  winner?: { title: string; votes: number; manual?: boolean };
+  /** The option this guest voted for. */
+  yourVote?: string;
+}
+
+export interface VoteStaff extends Omit<VotePublic, "yourVote"> {
+  autoPlay: boolean;
+  displayId?: string;
+  winnerItemId?: string;
+  winnerDisplayId?: string;
+  /** Something staff should know ("Nobody voted"). */
+  note?: string;
+}
+
+/** The guest page: what's on, and the vote. No links, no server details. */
+export interface PublicState {
+  name: string;
+  playing: { tv: string; title: string; subtitle?: string; poster?: string; paused: boolean; progress?: number; endsInSec?: number }[];
+  /** Typed in by staff. */
+  tonight: TonightEntry[];
+  vote: VotePublic | null;
+}
+
 export interface StaffState {
   name: string;
   ready: boolean;
   server: ServerStatus;
   tvs: TvInfo[];
   video: { problem: VideoProblem; fake: boolean };
+  vote: VoteStaff;
+  tonight: TonightEntry[];
 }
 
 export interface AdminState extends StaffState {

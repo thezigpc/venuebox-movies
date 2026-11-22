@@ -385,6 +385,11 @@ export class JellyfinSource implements MediaSource {
     });
   }
 
+  async resume(): Promise<Card[]> {
+    const r = await this.get<{ Items?: JItem[] }>(`/Users/${this.uid()}/Items/Resume?mediaTypes=Video&includeItemTypes=Movie,Episode&fields=ChildCount&enableImageTypes=Primary&imageTypeLimit=1&limit=12`);
+    return (r.Items ?? []).map((it) => this.card(it));
+  }
+
   async collections(): Promise<Card[]> {
     const r = await this.get<{ Items?: JItem[] }>(`/Items?userId=${this.uid()}&recursive=true&includeItemTypes=BoxSet&sortBy=SortName&fields=ChildCount&limit=200`);
     return (r.Items ?? []).map((it) => this.card(it));

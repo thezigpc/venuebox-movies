@@ -18,4 +18,4 @@ export const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD ?? "";
 export const GAME_NAME = process.env.GAME_NAME ?? "";
 /** Dev only: pretend TVs to play on when there's no box (or the box can't play video yet). */
 export const FAKE_TVS = /^(1|true|yes)$/i.test(process.env.MOVIES_FAKE_TVS ?? "");
-export const VERSION = "0.4.0";
+export const VERSION = "0.5.0";

@@ -126,6 +126,8 @@ export interface PlayerOptions {
   progressMs?: number;
   /** A TV that hasn't started playing after this long is an error. */
   startTimeoutMs?: number;
+  /** A TV's movie (or its whole queue) ended by itself: not stopped, not an error. */
+  onFinished?: (displayId: string) => Promise<void> | void;
 }
 
 export interface PlayOptions extends TrackChoice {
@@ -591,6 +593,7 @@ export class Player {
       }
       this.sessions.delete(s.displayId);
       this.o.emit("video_stopped", { tv: s.tvName });
+      await Promise.resolve(this.o.onFinished?.(s.displayId)).catch((err) => log.warn("player", "after-the-movie step failed", { err: String(err) }));
       return;
     }
     // Stopped part-way on the TV itself (its remote): keep the resume point, let go.

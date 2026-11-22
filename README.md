@@ -20,6 +20,16 @@ TV           ⇄ media server: the video itself
 
 "Venuebox" means it runs on a box. Standalone, it browses the server but can't play on TVs.
 
+Three pages:
+- **Guests** (`/`): what's on each TV, what's playing tonight, and a vote for the next movie.
+  No sign-in. It never plays anything.
+- **Staff** (`/staff`): browse, play, the TV remote, the guest vote and tonight's list. It's
+  laid out for a phone, an iPad upright, and an iPad on its side.
+- **Settings** (`/admin`).
+
+**With no media server**, the app still runs the guest page: staff type tonight's movies and
+the movies for a vote by hand, and put the winner on themselves.
+
 ## Setting it up (on the box)
 
 1. Install the app from the box's Apps tab, and approve **video playback** when asked.

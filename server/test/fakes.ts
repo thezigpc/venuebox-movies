@@ -117,6 +117,7 @@ export async function fakeJellyfin(o: { basePath?: string; tls?: boolean } = {})
       if (!auth.includes(`Token="${TOKEN}"`)) return void res.writeHead(401).end();
       if (p === "/Sessions/Logout") return void res.writeHead(204).end();
       if (p === "/Users/Me") return json({ Name: USER, Policy: { IsAdministrator: jf.isAdmin } });
+      if (p.startsWith("/Users/") && p.endsWith("/Items/Resume")) return json({ Items: MOVIES.filter((m) => Number((m.UserData as J | undefined)?.PlaybackPositionTicks) > 0) });
       if (p === "/UserViews") return json({ Items: OTHER.filter((x) => x.Type === "CollectionFolder") });
       if (p.startsWith("/Sessions/Playing")) {
         jf.reports.push({ kind: p.replace("/Sessions/Playing", "") || "/Start", body: body ?? {} });

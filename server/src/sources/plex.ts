@@ -29,6 +29,7 @@ export function createPlexSource(): MediaSource {
     collections: no,
     browse: no,
     search: no,
+    resume: no,
     item: no,
     queue: no,
     playback: no,

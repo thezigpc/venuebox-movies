@@ -281,7 +281,7 @@ export function AdminPage() {
         <header className="top">
           <h1>Movies settings</h1>
           <nav>
-            <a href={bgUrl("/")}>Pick a movie</a>
+            <a href={bgUrl("/staff")}>Pick a movie</a>
             <button className="link" onClick={() => void signOut()}>
               Sign out
             </button>

@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.5.0 (2026-11-21)
+- **A new staff page**, at `/staff` (routes.host), laid out per device:
+  - phone: the list, a mini player bar, and a full-screen remote;
+  - iPad portrait: a dock at the bottom with the TVs and the remote;
+  - iPad landscape: a side panel with the TVs, the remote and the vote.
+  - The remote has a scrubber, ±30 s, audio and subtitles, and stop. It starts on the TV
+    that's playing.
+  - "Carry on watching" lists part-watched movies.
+  - Links into the page: `#remote`, `#vote`, `#item=<id>`, `#tv=<id>`.
+- **A guest page**, at `/` (routes.player, no sign-in): what's on each TV, tonight's list,
+  and the vote. It shows titles and progress only: never a link or the server.
+- **Guest vote.** Staff put up to 8 movies in a vote, from the library or typed in.
+  - It closes after a set time, when the TV's movie ends, or when staff close it.
+  - The winner starts by itself when the TV is free, or waits for "Play now".
+  - One vote per browser, changeable; at most 6 voters per network address.
+  - Kept in memory: an app restart ends a vote.
+- **Works with no media server.** Staff type a "Playing tonight" list for guests, and typed
+  movies can go in a vote. A typed winner is announced for staff to put on.
+- Fix: a refused vote action now says why, not "Bad request."
+
 ## 0.4.0 (2026-11-21)
 - SDK 0.19.0 (box 0.29.0): **players that switch tracks themselves** (`formats.tracks`:
   screens on the box now, the Venuebox apps as they update).

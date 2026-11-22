@@ -3,7 +3,7 @@ import { after, afterEach, before, beforeEach, describe, test } from "node:test"
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import type { Card, ItemDetail, Library, Page, StaffState } from "@movies/shared";
+import type { Card, ItemDetail, Library, Page, PublicState, StaffState } from "@movies/shared";
 import { connect, fakeJellyfin, PASSWORD, startApp, TOKEN, USER, type FakeJellyfin, type TestApp } from "./fakes.js";
 
 // Every log line any test produces: none may carry the token.
@@ -620,5 +620,170 @@ describe("playing", () => {
     await play("atv", "m1");
     const s = JSON.stringify(await state());
     assert.ok(!s.includes(TOKEN) && !s.includes("api_key"));
+  });
+});
+
+describe("guest page and vote", () => {
+  beforeEach(() => connect(t, jf));
+
+  const V1 = "voter-aaaaaaaaaaaaaaaa";
+  const V2 = "voter-bbbbbbbbbbbbbbbb";
+  const pub = async (voter?: string) => (await (await fetch(`${t.url}/api/public/state${voter ? `?voter=${voter}` : ""}`)).json()) as PublicState;
+  const castVote = (voter: string, itemId: string) => fetch(`${t.url}/api/public/vote`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ voter, itemId }) });
+  const add = (itemId: string) => t.api("POST", "/api/admin/vote/options", { itemId });
+  const lastPlay = () => t.tvs.plays.at(-1)!;
+
+  test("carry on watching lists part-watched movies", async () => {
+    const r = await t.api<{ value: { id: string }[] }>("GET", "/api/admin/resume");
+    assert.deepEqual(r.body.value.map((c) => c.id), ["m1"]);
+  });
+
+  test("the guest page needs no sign-in and shows only titles and progress", async () => {
+    await t.api("POST", "/api/admin/play", { displayId: "atv", itemId: "m2" });
+    t.tvs.statuses.set("atv", { state: "playing", position: 2700, duration: 5400 });
+    await t.app.player.tick();
+    const s = await pub();
+    assert.equal(s.playing.length, 1);
+    assert.equal(s.playing[0]!.tv, "Bar Apple TV");
+    assert.equal(s.playing[0]!.title, "Plain Movie");
+    assert.equal(s.playing[0]!.progress, 0.5);
+    assert.equal(s.playing[0]!.endsInSec, 2700);
+    assert.equal(s.vote, null, "no vote yet");
+    const text = JSON.stringify(s);
+    assert.ok(!text.includes(TOKEN) && !text.includes("api_key") && !text.includes("127.0.0.1"), "no link, key or server address");
+    assert.equal((await fetch(`${t.url}/api/admin/vote/open`, { method: "POST" })).status, 401, "staff routes stay closed");
+  });
+
+  test("a vote: staff choose, guests vote once each, the winner plays when the TV is free", async () => {
+    const early = await t.api<{ error: string }>("POST", "/api/admin/vote/open", { displayId: "atv", closes: "manual" });
+    assert.equal(early.status, 400, "needs two movies");
+    assert.match(early.body.error, /at least two movies/, "staff are told why");
+    await add("m1");
+    await add("m2");
+    assert.equal((await add("s1")).status, 400, "a series can't go in");
+    assert.equal((await pub()).vote, null, "guests see nothing until it opens");
+    const open = await t.api<{ value: { open: boolean } }>("POST", "/api/admin/vote/open", { displayId: "atv", closes: "manual", autoPlay: true });
+    assert.equal(open.body.value.open, true);
+    assert.equal((await add("e1")).status, 409, "no changes while open");
+
+    assert.equal((await castVote(V1, "m1")).status, 200);
+    assert.equal((await castVote(V2, "m2")).status, 200);
+    assert.equal((await castVote(V1, "m2")).status, 200, "changing a vote");
+    assert.equal((await castVote(V1, "nope")).status, 400);
+    assert.equal((await castVote("short", "m1")).status, 400);
+    const s = await pub(V1);
+    assert.equal(s.vote!.total, 2);
+    assert.equal(s.vote!.yourVote, "m2");
+    assert.deepEqual(s.vote!.options.map((o) => [o.itemId, o.votes]), [["m1", 0], ["m2", 2]]);
+    assert.equal(s.vote!.tvName, "Bar Apple TV");
+
+    const plays = t.tvs.plays.length;
+    await t.api("POST", "/api/admin/vote/close");
+    assert.equal(t.tvs.plays.length, plays + 1, "the TV was free: the winner starts");
+    assert.equal(lastPlay().displayId, "atv");
+    assert.match(lastPlay().args.url, /\/m2\//);
+    assert.equal((await castVote(V2, "m1")).status, 409, "closed");
+    assert.equal((await state()).vote.options.length, 0);
+  });
+
+  test("one connection can't flood the vote", async () => {
+    await add("m1");
+    await add("m2");
+    await t.api("POST", "/api/admin/vote/open", { displayId: "atv", closes: "manual" });
+    const codes: number[] = [];
+    for (let i = 0; i < 8; i++) codes.push((await castVote(`voter-${String(i).padStart(16, "0")}`, "m1")).status);
+    assert.deepEqual(codes, [200, 200, 200, 200, 200, 200, 429, 429]);
+  });
+
+  test("closes when the movie ends: the winner follows it", async () => {
+    await t.api("POST", "/api/admin/play", { displayId: "atv", itemId: "m2" });
+    await add("m1");
+    await add("e1");
+    await t.api("POST", "/api/admin/vote/open", { displayId: "atv", closes: "movie-end", autoPlay: true });
+    await castVote(V1, "m1");
+    t.tvs.statuses.set("atv", { state: "playing", position: 5390, duration: 5400 });
+    await t.app.player.tick();
+    assert.equal((await pub()).vote!.open, true);
+    t.tvs.statuses.set("atv", { state: "stopped" });
+    await t.app.player.tick();
+    assert.match(lastPlay().args.url, /\/m1\//, "the winner started after the movie");
+    assert.equal(lastPlay().args.startAt, undefined, "from the beginning");
+  });
+
+  test("closed while a movie is still on: the winner waits; staff can start it; without auto-play it always waits", async () => {
+    await t.api("POST", "/api/admin/play", { displayId: "atv", itemId: "m2" });
+    t.tvs.statuses.set("atv", { state: "playing", position: 100, duration: 5400 });
+    await t.app.player.tick();
+    await add("m1");
+    await add("e1");
+    await t.api("POST", "/api/admin/vote/open", { displayId: "atv", closes: "manual", autoPlay: false });
+    await castVote(V1, "e1");
+    const plays = t.tvs.plays.length;
+    await t.api("POST", "/api/admin/vote/close");
+    assert.equal(t.tvs.plays.length, plays, "nothing interrupted");
+    const st = await state();
+    assert.equal(st.vote.winner!.title, "Episode 1");
+    assert.equal((await pub()).vote!.winner!.title, "Episode 1");
+    await t.api("POST", "/api/admin/vote/play");
+    assert.match(lastPlay().args.url, /\/e1\//);
+    assert.equal((await state()).vote.winner, undefined);
+  });
+
+  test("a timed vote closes by itself; nobody voted: nothing plays", async () => {
+    await add("m1");
+    await add("m2");
+    await t.api("POST", "/api/admin/vote/open", { displayId: "atv", closes: "time", minutes: 1 });
+    assert.ok((await pub()).vote!.closesInSec! <= 60);
+    const plays = t.tvs.plays.length;
+    await t.api("POST", "/api/admin/vote/close");
+    assert.equal(t.tvs.plays.length, plays);
+    assert.match((await state()).vote.note ?? "", /Nobody voted/);
+    await t.api("DELETE", "/api/admin/vote");
+    assert.equal((await state()).vote.note, undefined);
+  });
+});
+
+describe("without a media server", () => {
+  const pub = async () => (await (await fetch(`${t.url}/api/public/state`)).json()) as PublicState;
+
+  test("tonight's list: typed by staff, shown to guests", async () => {
+    await t.api("POST", "/api/admin/login", {});
+    const a = await t.api<{ value: { id: string; title: string }[] }>("POST", "/api/admin/tonight", { title: "  The Late Show  ", when: "9:00 pm, Patio TV" });
+    assert.equal(a.status, 200);
+    assert.equal(a.body.value[0]!.title, "The Late Show");
+    await t.api("POST", "/api/admin/tonight", { title: "Second Feature" });
+    assert.equal((await t.api("POST", "/api/admin/tonight", { title: "   " })).status, 400);
+    const id = a.body.value[0]!.id;
+    await t.api("PUT", `/api/admin/tonight/${id}`, { onNow: true });
+    const s = await pub();
+    assert.deepEqual(s.tonight.map((e) => [e.title, e.when ?? null, e.onNow]), [
+      ["The Late Show", "9:00 pm, Patio TV", true],
+      ["Second Feature", null, false],
+    ]);
+    assert.deepEqual(s.playing, []);
+    await t.api("DELETE", `/api/admin/tonight/${id}`);
+    assert.equal((await pub()).tonight.length, 1);
+    assert.equal((await fetch(`${t.url}/api/admin/tonight`, { method: "POST" })).status, 401);
+  });
+
+  test("a vote on typed-in movies, with no TV: the winner is announced for staff to put on", async () => {
+    assert.equal((await state()).ready, false);
+    await t.api("POST", "/api/admin/vote/options", { title: "Typed Movie A" });
+    await t.api("POST", "/api/admin/vote/options", { title: "Typed Movie B" });
+    await t.api("POST", "/api/admin/vote/options", { title: "typed movie b" });
+    const st = await state();
+    assert.deepEqual(st.vote.options.map((o) => [o.title, o.manual]), [["Typed Movie A", true], ["Typed Movie B", true]]);
+    assert.equal((await t.api("POST", "/api/admin/vote/open", { closes: "movie-end" })).status, 400, "movie-end needs a TV");
+    assert.equal((await t.api("POST", "/api/admin/vote/open", { closes: "manual" })).status, 200);
+    const b = (await pub()).vote!.options[1]!.itemId;
+    assert.equal((await fetch(`${t.url}/api/public/vote`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ voter: "voter-cccccccccccccccc", itemId: b }) })).status, 200);
+    await t.api("POST", "/api/admin/vote/close");
+    assert.equal(t.tvs.plays.length, 0, "nothing can start by itself");
+    const after = await state();
+    assert.equal(after.vote.winner!.title, "Typed Movie B");
+    assert.equal(after.vote.winner!.manual, true);
+    assert.match(after.vote.note ?? "", /put it on yourself/);
+    assert.equal((await pub()).vote!.winner!.title, "Typed Movie B");
+    assert.equal((await t.api("POST", "/api/admin/vote/play")).status, 409);
   });
 });

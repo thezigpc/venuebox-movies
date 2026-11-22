@@ -40,10 +40,15 @@ doubletake or screen capture for movies.
   status polling, Jellyfin reports, events.
 - `server/src/media.ts`: media_list / media_play / media_stop and status.media.targets.
 - `server/src/app.ts`: the HTTP API; `posters.ts`: signed poster links through the app.
-- Client:
-  - `pages/StaffPage.tsx`: posters, search, details sheet, and the TV dock with its remote,
-    always on screen;
+- `server/src/vote.ts`: the guest vote (in memory): options from the library or typed, the
+  winner through `player.play`; `Player.onFinished` tells it a movie ended by itself.
+- Client (routes: player `/` guests, host `/staff`, admin `/admin`):
+  - `pages/GuestPage.tsx`: public; what's on, tonight's list, the vote (`/api/public/*`);
+  - `pages/StaffPage.tsx`: `useLayout` picks phone (mini bar + full remote), portrait (dock)
+    or landscape (side panel); the vote sheet and tonight's list; styles in `app.css`;
   - `pages/AdminPage.tsx`: settings.
+- To see a page: headless Edge works here (`msedge --headless=new --screenshot`, at least
+  500 px wide); on the mock box, `/__bargames/staff?next=/staff` signs in.
 
 ## Platform contract (agreed with GameBroker 2026-11-21: box 0.27.0 / SDK 0.17.0; Venuebox apps box 0.28.0 / SDK 0.18.0)
 - `playVideo(displayId, { url, mime, title, poster?, startAt? })`, `videoControl(…,
@@ -78,7 +83,9 @@ doubletake or screen capture for movies.
 - Events: standard `video_started { tv, title }` / `video_stopped { tv }`.
 - SDK 0.18.2: `kind: "local"` (a screen on the box, mpv). `formats` wins whatever the kind
   (`profileFor`, `canSeek`).
-- Vendored SDK 0.19.0 (Movies 0.4.0). Installed on the venue box (0.1.1). **No live testing
+- Vendored SDK 0.19.0 (Movies 0.5.0).
+- The public API (`/api/public/state`, `/api/public/vote`) must never carry a link, a key or
+  the server's address: titles, progress and signed poster paths only. Installed on the venue box (0.1.1). **No live testing
   on the venue's TVs until the user says so.**
 
 ## Conventions

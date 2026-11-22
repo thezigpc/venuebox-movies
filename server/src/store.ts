@@ -8,7 +8,7 @@
 import { chmod } from "node:fs/promises";
 import { randomBytes, randomUUID } from "node:crypto";
 import { createJsonStore, type JsonStore } from "@bargames/gamekit/server";
-import { isProfileId, type TvProfileId } from "@movies/shared";
+import { isProfileId, type TonightEntry, type TvProfileId } from "@movies/shared";
 
 export interface TvSettings {
   /** Set by staff; absent: chosen from what the box says the TV is. */
@@ -30,6 +30,8 @@ export interface Settings {
   serverName: string;
   serverVersion: string;
   tvs: Record<string, TvSettings>;
+  /** "Playing tonight", typed by staff for the guest page. */
+  tonight: TonightEntry[];
 }
 
 export interface Secrets {
@@ -49,7 +51,7 @@ const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 
 
 export class Store {
   readonly json: JsonStore;
-  settings: Settings = { name: "", source: "jellyfin", serverUrl: null, pin: null, serverName: "", serverVersion: "", tvs: {} };
+  settings: Settings = { name: "", source: "jellyfin", serverUrl: null, pin: null, serverName: "", serverVersion: "", tvs: {}, tonight: [] };
   secrets: Secrets = { deviceId: "", posterKey: "", jellyfin: null };
 
   constructor(readonly dir: string) {
@@ -59,7 +61,7 @@ export class Store {
   async init(): Promise<void> {
     const s = await this.json.read<Settings>("settings.json", isObj as unknown as (v: unknown) => v is Settings);
     if (s) {
-      this.settings = { ...this.settings, ...s, tvs: isObj(s.tvs) ? (s.tvs as Settings["tvs"]) : {} };
+      this.settings = { ...this.settings, ...s, tvs: isObj(s.tvs) ? (s.tvs as Settings["tvs"]) : {}, tonight: Array.isArray(s.tonight) ? s.tonight.filter((e) => isObj(e) && typeof e.id === "string" && typeof e.title === "string") : [] };
       for (const t of Object.values(this.settings.tvs)) if (t.profile && !isProfileId(t.profile)) delete t.profile;
     }
     const sec = await this.json.read<Secrets>("secrets.json", isObj as unknown as (v: unknown) => v is Secrets);

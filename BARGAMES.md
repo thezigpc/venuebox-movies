@@ -1,4 +1,4 @@
-# Bar Games integration report: Movies 0.4.0
+# Bar Games integration report: Movies 0.5.0
 
 - **Level:** 3, an app and a media provider.
 - **SDK:** 0.19.0.
@@ -11,7 +11,8 @@
 - **GameKit:** 0.10.6.
 - **Manifest:**
   - `id: movies`, port 3017, `routing.basePath: true`, `network.internet: true`;
-  - routes `player`/`host` `/` (the staff picker; staff sign-in) and `admin` `/admin`;
+  - routes `player` `/` (guests: what's on, the vote; no sign-in), `host` `/staff` (staff)
+    and `admin` `/admin`;
   - `media: { launch: [] }` and `video: { play: true }`.
 
 ## Checks (mock box, SDK 0.18.0 and 0.18.1, `--base /movies`, the real Jellyfin, the mock box's video TVs)
@@ -123,6 +124,16 @@ Verified on the 0.19.0 mock box (fake-den) against the real Jellyfin:
   player.
 - A text subtitle ("+1", English SDH SRT) as a side file: HTTP 200, text/vtt, 1708 cues.
 - No token, address, key, link or side-file link in any log.
+
+## Guest page and vote (0.5.0)
+
+- `/api/public/state` and `/api/public/vote` need no sign-in. They carry titles, progress,
+  signed poster paths and vote counts only.
+- A vote is in memory. Voters are a random id per browser, capped at 6 per network address.
+- With no media server: tonight's list (`settings.json`) and typed vote options.
+- Checked in headless Edge on the 0.19.0 mock box with the real Jellyfin: the phone, iPad
+  portrait and iPad landscape layouts, the full remote, the details sheet, the vote sheet,
+  the guest page, and both pages with no server.
 
 ## Known limits
 

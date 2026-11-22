@@ -2,7 +2,7 @@
 // to the media server: posters and everything else come through this app.
 
 import { bgUrl } from "@bargames/sdk/client";
-import type { AdminState, Card, ItemDetail, Library, NowPlaying, Page, ServerStatus, StaffState, TestResult, TrackChoice } from "@movies/shared";
+import type { AdminState, Card, ItemDetail, Library, NowPlaying, Page, PublicState, ServerStatus, StaffState, TestResult, TonightEntry, TrackChoice, VoteCloses, VoteStaff } from "@movies/shared";
 
 const TOKEN_KEY = "movies.adminToken";
 
@@ -78,6 +78,24 @@ export const api = {
   play: (displayId: string, itemId: string, resume: boolean, tracks: TrackChoice = {}) => v(request<{ value: { title: string; method: "direct" | "transcode"; reasons: string[] } }>("POST", "/api/admin/play", { displayId, itemId, resume, ...tracks })),
   tracks: (displayId: string, choice: TrackChoice) => request<{ value: NowPlaying | null; inPlace: boolean }>("POST", `/api/admin/tvs/${encodeURIComponent(displayId)}/tracks`, choice),
   control: (displayId: string, action: ControlAction) => request("POST", `/api/admin/tvs/${encodeURIComponent(displayId)}/control`, { action }),
+
+  seek: (displayId: string, seconds: number) => request("POST", `/api/admin/tvs/${encodeURIComponent(displayId)}/control`, { action: "seek", seconds }),
+  resume: () => v(request<{ value: Card[] }>("GET", "/api/admin/resume")),
+
+  // The guest page (no sign-in).
+  publicState: (voter: string) => request<PublicState>("GET", `/api/public/state?voter=${encodeURIComponent(voter)}`),
+  publicVote: (voter: string, itemId: string) => v(request<{ value: PublicState }>("POST", "/api/public/vote", { voter, itemId })),
+
+  // The guest vote and tonight's list (staff).
+  voteAdd: (o: { itemId: string } | { title: string }) => v(request<{ value: VoteStaff }>("POST", "/api/admin/vote/options", o)),
+  voteRemove: (itemId: string) => v(request<{ value: VoteStaff }>("DELETE", `/api/admin/vote/options/${encodeURIComponent(itemId)}`)),
+  voteOpen: (o: { displayId?: string; closes: VoteCloses; minutes?: number; autoPlay: boolean }) => v(request<{ value: VoteStaff }>("POST", "/api/admin/vote/open", o)),
+  voteClose: () => v(request<{ value: VoteStaff }>("POST", "/api/admin/vote/close", {})),
+  votePlay: () => v(request<{ value: VoteStaff }>("POST", "/api/admin/vote/play", {})),
+  voteClear: () => v(request<{ value: VoteStaff }>("DELETE", "/api/admin/vote")),
+  tonightAdd: (title: string, when: string) => v(request<{ value: TonightEntry[] }>("POST", "/api/admin/tonight", { title, when })),
+  tonightSet: (id: string, patch: Partial<TonightEntry>) => v(request<{ value: TonightEntry[] }>("PUT", `/api/admin/tonight/${encodeURIComponent(id)}`, patch)),
+  tonightRemove: (id: string) => v(request<{ value: TonightEntry[] }>("DELETE", `/api/admin/tonight/${encodeURIComponent(id)}`)),
 
   setServer: (url: string) => v(request<{ value: { notes: string[]; test: TestResult; server: ServerStatus } }>("PUT", "/api/admin/server", { url })),
   testServer: () => v(request<{ value: { test: TestResult; server: ServerStatus } }>("POST", "/api/admin/server/test", {})),

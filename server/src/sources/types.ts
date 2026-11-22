@@ -86,6 +86,8 @@ export interface MediaSource {
   collections(): Promise<Card[]>;
   browse(libraryId: string, page: number, pageSize?: number): Promise<Page<Card>>;
   search(q: string): Promise<Card[]>;
+  /** Part-watched movies and episodes, the latest first ("carry on watching"). */
+  resume(): Promise<Card[]>;
   item(id: string): Promise<ItemDetail>;
   /**
    * What playing this id means, as a list of playable ids: a movie or episode is itself; a
