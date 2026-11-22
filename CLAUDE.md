@@ -83,7 +83,9 @@ doubletake or screen capture for movies.
 - Events: standard `video_started { tv, title }` / `video_stopped { tv }`.
 - SDK 0.18.2: `kind: "local"` (a screen on the box, mpv). `formats` wins whatever the kind
   (`profileFor`, `canSeek`).
-- Vendored SDK 0.19.0 (Movies 0.5.2).
+- Vendored SDK 0.19.0 (Movies 0.5.3).
+- The user's rule: nothing plays on a TV by itself unless staff chose that. A vote's winner
+  waits for staff by default (`autoPlay` is opt-in).
 - `/api/public/state` adds `staff: true` when `bg.isStaff(req)`: the guest page then shows
   buttons to `/staff` and `/admin`. Never redirect staff away from it.
 - Guests on the venue Wi-Fi all share one public address (`bg.clientIp`): never cap people per

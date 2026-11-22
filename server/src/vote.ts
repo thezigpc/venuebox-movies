@@ -40,13 +40,16 @@ export class Vote {
   private displayId: string | undefined;
   private closes: VoteCloses = "manual";
   private closesAt: number | undefined;
-  private autoPlay = true;
+  /** Off (the default): the winner waits for staff to review the result and press play. */
+  private autoPlay = false;
   private votes = new Map<string, string>();
   private perAddress = new Map<string, Set<string>>();
   private recent = new Map<string, number[]>();
   /** The winner of the last round, waiting to go on (or for staff to start it). */
   private winner: { itemId: string; title: string; displayId?: string; votes: number; manual?: boolean } | undefined;
   private note: string | undefined;
+  /** The last round's final count, for staff to review before they play the winner. */
+  private results: { title: string; votes: number }[] | undefined;
   private readonly now: () => number;
 
   constructor(private readonly d: VoteDeps) {
@@ -94,6 +97,7 @@ export class Vote {
     this.recent.clear();
     this.winner = undefined;
     this.note = undefined;
+    this.results = undefined;
     this.open = true;
     log.info("vote", "opened", { tv: o.displayId ? this.d.tvName(o.displayId) : undefined, movies: this.options.length, closes: o.closes, autoPlay: o.autoPlay });
   }
@@ -106,6 +110,7 @@ export class Vote {
     const tally = this.tally();
     const best = this.options.map((o) => ({ o, n: tally.get(o.itemId) ?? 0 })).sort((a, b) => b.n - a.n)[0];
     const displayId = this.displayId;
+    this.results = this.options.map((o) => ({ title: o.title, votes: tally.get(o.itemId) ?? 0 })).sort((a, b) => b.votes - a.votes);
     if (!best || best.n === 0) {
       this.note = "Nobody voted, so nothing was picked.";
       log.info("vote", "closed with no votes");
@@ -129,6 +134,7 @@ export class Vote {
       await this.d.play(w.displayId, w.itemId);
       this.winner = undefined;
       this.note = undefined;
+      this.results = undefined;
     } catch (err) {
       this.note = `The winner didn't start: ${err instanceof Error ? err.message : String(err)}`;
       log.warn("vote", "the winner didn't start", { title: w.title, err: String(err) });
@@ -146,6 +152,7 @@ export class Vote {
     this.recent.clear();
     this.winner = undefined;
     this.note = undefined;
+    this.results = undefined;
   }
 
   // ---------------------------------------------------------------- timing
@@ -219,6 +226,8 @@ export class Vote {
       ...(this.displayId ? { displayId: this.displayId } : {}),
       ...(this.winner?.displayId ? { winnerItemId: this.winner.itemId, winnerDisplayId: this.winner.displayId } : {}),
       ...(this.note ? { note: this.note } : {}),
+      ...(this.results && !this.open ? { results: this.results } : {}),
+      ...(this.winner?.displayId ? { winnerTvName: this.d.tvName(this.winner.displayId) ?? "the TV" } : {}),
     };
   }
 }

@@ -749,6 +749,28 @@ describe("guest page and vote", () => {
     assert.equal((await state()).vote.winner, undefined);
   });
 
+  test("by default the winner waits: staff review the result, then play it", async () => {
+    await add("m1");
+    await add("m2");
+    await t.api("POST", "/api/admin/vote/open", { displayId: "atv", closes: "manual" });
+    await castVote(V1, "m2");
+    await castVote(V2, "m2");
+    const plays = t.tvs.plays.length;
+    await t.api("POST", "/api/admin/vote/close");
+    assert.equal(t.tvs.plays.length, plays, "the TV is free, but nothing starts by itself");
+    const st = await state();
+    assert.equal(st.vote.autoPlay, false);
+    assert.equal(st.vote.winner!.title, "Plain Movie");
+    assert.equal(st.vote.winnerTvName, "Bar Apple TV");
+    assert.deepEqual(st.vote.results, [{ title: "Plain Movie", votes: 2 }, { title: "Big Movie", votes: 0 }]);
+    // Even when a movie ends on that TV, it still waits.
+    await t.app.player.tick();
+    assert.equal(t.tvs.plays.length, plays);
+    await t.api("POST", "/api/admin/vote/play");
+    assert.equal(t.tvs.plays.length, plays + 1);
+    assert.equal((await state()).vote.results, undefined);
+  });
+
   test("a timed vote closes by itself; nobody voted: nothing plays", async () => {
     await add("m1");
     await add("m2");

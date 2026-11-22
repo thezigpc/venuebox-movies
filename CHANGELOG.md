@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.3 (2026-11-21)
+- A vote's winner no longer starts by itself unless staff ask for it. By default, when a vote
+  closes, staff see the full result and press "Play it" (or clear it). "Start the winner by
+  itself" is a tick box when opening a vote, off by default.
+- Guests are told "The staff will put it on" instead of "Up next".
+
 ## 0.5.2 (2026-11-21)
 - Staff who open the app land on the guest page (the app's main address). When the box
   vouches for them, that page now shows "Staff controls" (to `/staff`, no password) and

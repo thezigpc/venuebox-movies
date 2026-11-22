@@ -375,7 +375,8 @@ function VoteSheet({ state, selectedTv, onClose, notify, reload }: { state: Staf
   const [tv, setTv] = useState(selectedTv);
   const [closes, setCloses] = useState<VoteCloses>("time");
   const [minutes, setMinutes] = useState(10);
-  const [autoPlay, setAutoPlay] = useState(true);
+  // Off unless staff ask: they review the result and press play.
+  const [autoPlay, setAutoPlay] = useState(false);
   const target = tvs.find((t) => t.displayId === tv);
   const allManual = vote.options.length > 0 && vote.options.every((o) => o.manual);
   const addTyped = (e: FormEvent) => {
@@ -399,18 +400,25 @@ function VoteSheet({ state, selectedTv, onClose, notify, reload }: { state: Staf
         {vote.winner && !vote.open && (
           <div className="mv-votecard">
             <strong>
-              {vote.winner.title} won ({votesWords(vote.winner.votes)})
+              The result: {vote.winner.title} won ({votesWords(vote.winner.votes)})
             </strong>
+            {vote.results?.map((x, i) => (
+              <div key={`${x.title}-${i}`} className="mv-votecard-row">
+                <span>{x.title}</span>
+                <span className="muted">{votesWords(x.votes)}</span>
+              </div>
+            ))}
+            {vote.winnerDisplayId && <span className="muted small">Nothing starts until you press play{vote.autoPlay ? ", or until the movie on that TV ends" : ""}.</span>}
             <div className="mv-two">
               {vote.winnerDisplayId ? (
                 <button className="primary" disabled={r.busy} onClick={() => void r.run(() => api.votePlay())}>
-                  Play it now
+                  <IconPlay size={16} /> Play it on {vote.winnerTvName ?? "the TV"}
                 </button>
               ) : (
                 <span />
               )}
               <button disabled={r.busy} onClick={() => void r.run(() => api.voteClear())}>
-                Done: clear it
+                Don't play it: clear
               </button>
             </div>
           </div>
@@ -504,7 +512,7 @@ function VoteSheet({ state, selectedTv, onClose, notify, reload }: { state: Staf
             )}
             {target && !allManual && (
               <label className="check">
-                <input type="checkbox" checked={autoPlay} onChange={(e) => setAutoPlay(e.target.checked)} /> Start the winner by itself when the TV is free. Off: it waits for me.
+                <input type="checkbox" checked={autoPlay} onChange={(e) => setAutoPlay(e.target.checked)} /> Start the winner by itself when the TV is free. Leave this off to see the result first and press play yourself.
               </label>
             )}
             {(allManual || !target) && vote.options.length > 0 && <p className="muted small">A typed-in winner can't start by itself: you'll be told which movie won, to put it on.</p>}

@@ -195,7 +195,7 @@ export function GuestPage() {
                   <strong>{vote.winner.title}</strong>
                   <span className="muted small">
                     Won with {vote.winner.votes === 1 ? "1 vote" : `${vote.winner.votes} votes`}
-                    {vote.tvName && !vote.winner.manual ? `. Up next on ${vote.tvName}.` : ". Coming up."}
+                    {". The staff will put it on."}
                   </span>
                 </span>
               </div>

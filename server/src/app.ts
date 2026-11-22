@@ -444,7 +444,7 @@ export async function createApp(o: AppOptions): Promise<MoviesApp> {
       const b = (req.body ?? {}) as Record<string, unknown>;
       const closes = b.closes === "time" || b.closes === "movie-end" ? b.closes : "manual";
       await player.tvs();
-      vote.start({ ...(str(b.displayId, 200) ? { displayId: str(b.displayId, 200) } : {}), closes, ...(Number.isFinite(Number(b.minutes)) ? { minutes: Number(b.minutes) } : {}), autoPlay: b.autoPlay !== false });
+      vote.start({ ...(str(b.displayId, 200) ? { displayId: str(b.displayId, 200) } : {}), closes, ...(Number.isFinite(Number(b.minutes)) ? { minutes: Number(b.minutes) } : {}), autoPlay: b.autoPlay === true });
       voteDone(res);
     }),
   );

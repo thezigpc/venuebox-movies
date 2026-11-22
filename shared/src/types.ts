@@ -222,6 +222,10 @@ export interface VoteStaff extends Omit<VotePublic, "yourVote"> {
   winnerDisplayId?: string;
   /** Something staff should know ("Nobody voted"). */
   note?: string;
+  /** The last round's final count, the most votes first, for staff to review. */
+  results?: { title: string; votes: number }[];
+  /** The TV the waiting winner would play on. */
+  winnerTvName?: string;
 }
 
 /** The guest page: what's on, and the vote. No links, no server details. */
