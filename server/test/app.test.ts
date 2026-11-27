@@ -503,16 +503,25 @@ describe("playing", () => {
       await t.api("POST", "/api/admin/play", { displayId: "atv", itemId: "m2" });
       assert.match(last().url, /MaxHeight=2160/);
       const plays = t.tvs.plays.length;
-      // The Apple TV's "no" sign: it says playing, with no place in the movie.
+      // The Apple TV's "no" sign: it says playing, with no place in the movie. A TV that has
+      // never told us its place isn't judged by that (it may never say).
       t.tvs.statuses.set("atv", { state: "playing" });
       await t.app.player.tick();
-      assert.equal(t.tvs.plays.length, plays + 1);
+      assert.equal(t.tvs.plays.length, plays, "no fallback on a TV that has never reported a place");
+      // Once it has reported one (an earlier good play), no place means no picture.
+      t.tvs.statuses.set("atv", { state: "playing", position: 12 });
+      await t.app.player.tick();
+      await t.api("POST", "/api/admin/play", { displayId: "atv", itemId: "m2", resume: false });
+      assert.match(last().url, /MaxHeight=2160/);
+      t.tvs.statuses.set("atv", { state: "playing" });
+      await t.app.player.tick();
+      assert.equal(t.tvs.plays.length, plays + 2);
       assert.match(last().url, /MaxHeight=1080/);
       assert.equal((await nowOn("atv")).shrunkTo, 1080);
       // Only once: a second failure is an error, not a loop.
       t.tvs.statuses.set("atv", { state: "error", message: "nope" });
       await t.app.player.tick();
-      assert.equal(t.tvs.plays.length, plays + 1);
+      assert.equal(t.tvs.plays.length, plays + 2);
       assert.equal((await nowOn("atv")).state, "error");
     } finally {
       undo();

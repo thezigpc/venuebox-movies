@@ -84,7 +84,10 @@ doubletake or screen capture for movies.
 - Events: standard `video_started { tv, title }` / `video_stopped { tv }`.
 - SDK 0.18.2: `kind: "local"` (a screen on the box, mpv). `formats` wins whatever the kind
   (`profileFor`, `canSeek`).
-- Vendored SDK 0.19.0 (Movies 0.6.0).
+- Vendored SDK 0.19.0 (Movies 0.6.1).
+- The box's gateway gives every request 60 s: `READY_BUDGET_MS` (player.ts) keeps a play under it.
+  An Apple TV's status may say "playing" with no `position` (the box's helper): the
+  no-picture fallback only trusts TVs in `Player.reportsPosition`.
 - Quality (0.6.0): `Quality` auto | original | 1080 | 720 (`Session.quality`, `shrink()` in
   player.ts caps the TV profile). `server/src/warm.ts` fetches the HLS part the TV will ask
   for first and times it (`Player` option `warm`); auto falls back to 1080p for burned-in

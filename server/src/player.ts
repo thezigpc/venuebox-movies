@@ -140,10 +140,16 @@ export interface PlayerOptions {
   /** A TV's movie (or its whole queue) ended by itself: not stopped, not an error. */
   onFinished?: (displayId: string) => Promise<void> | void;
   /** Fetches the start of the server's HLS before the TV does, and times it (warm.ts). */
-  warm?: (url: string, startAt?: number) => Promise<WarmResult>;
+  warm?: (url: string, startAt?: number, deadline?: number) => Promise<WarmResult>;
   /** A TV in "playing" with no place in the movie after this long hasn't got a picture. */
   noPictureMs?: number;
 }
+
+/**
+ * How long getting a stream ready may take in all. The box's gateway gives a request 60 s:
+ * staff must have an answer in words before that.
+ */
+const READY_BUDGET_MS = 48_000;
 
 /** Below this many seconds of video per second, a conversion can't be trusted to keep up. */
 const MIN_SPEED = 1.5;
@@ -163,6 +169,12 @@ export interface PlayOptions extends TrackChoice {
 
 export class Player {
   private sessions = new Map<string, Session>();
+  /**
+   * TVs that have told us where they are in a movie at least once. Only those are trusted
+   * when they say "playing" with no place: some players (an Apple TV over AirPlay, perhaps)
+   * may never say, even when the picture is fine.
+   */
+  private reportsPosition = new Set<string>();
   private tvCache: VideoTv[] = [];
   private tvCacheAt = 0;
   private timer: NodeJS.Timeout | null = null;
@@ -345,14 +357,15 @@ export class Player {
       pb = await ask();
     }
     if (!pb.directPlay && this.o.warm) {
-      let w = await this.o.warm(pb.url, pb.startAt);
+      const deadline = Date.now() + READY_BUDGET_MS;
+      let w = await this.o.warm(pb.url, pb.startAt, deadline);
       if (auto && !cap && above(1080) && (!w.ok || (w.speed != null && w.speed < MIN_SPEED))) {
         log.warn("player", "4K is too much for the server: falling back to 1080p", { tv: tv.name, title, problem: w.problem, firstMs: w.firstMs, speed: w.speed });
         why = w.ok ? "the server converts 4K too slowly" : "the server couldn't convert it in 4K";
         await drop(pb);
         cap = 1080;
         pb = await ask();
-        w = await this.o.warm(pb.url, pb.startAt);
+        w = await this.o.warm(pb.url, pb.startAt, deadline);
       }
       if (!w.ok) {
         await drop(pb);
@@ -642,11 +655,19 @@ export class Player {
     const st = await this.o.video.status(s.displayId);
     if (this.sessions.get(s.displayId) !== s || s.current !== c) return; // replaced meanwhile
     const now = this.now();
-    if (typeof st.position === "number") (c.position = st.position), (c.gotPosition = true);
+    if (typeof st.position === "number") {
+      c.position = st.position;
+      if (!c.gotPosition) {
+        // One line per play: how long the TV took to show where it is.
+        log.info("player", "the TV reports its place", { tv: s.tvName, afterSec: Math.round((now - c.startedAt) / 1000) });
+        this.reportsPosition.add(s.displayId);
+      }
+      c.gotPosition = true;
+    }
     if (st.duration && st.duration > 0) c.durationSec = Math.round(st.duration);
     // "Playing" with no place in the movie: the TV took the link but shows no picture (an
     // Apple TV shows a "no" sign and keeps saying playing).
-    if (st.state === "playing" && !c.gotPosition && now - c.startedAt >= (this.o.noPictureMs ?? 60_000) && (await this.fallBack(s, c, "no picture"))) return;
+    if (st.state === "playing" && !c.gotPosition && this.reportsPosition.has(s.displayId) && now - c.startedAt >= (this.o.noPictureMs ?? 60_000) && (await this.fallBack(s, c, "no picture"))) return;
 
     if (c.native && (st.state === "playing" || st.state === "paused")) {
       // A change made on the TV itself (its remote or menu): follow it, and let the rest of a

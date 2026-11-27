@@ -41,9 +41,11 @@ function segments(text: string, base: string): Segment[] {
   return out;
 }
 
-export async function warmHls(http: Http, url: string, startAt = 0, o: { now?: () => number; firstTimeoutMs?: number; slowStartMs?: number } = {}): Promise<WarmResult> {
+export async function warmHls(http: Http, url: string, startAt = 0, o: { now?: () => number; firstTimeoutMs?: number; slowStartMs?: number; deadline?: number } = {}): Promise<WarmResult> {
   const now = o.now ?? Date.now;
-  const get = (u: string, timeoutMs: number) => http({ url: u, headers: { accept: "*/*" }, timeoutMs, maxBytes: 160 * 1024 * 1024 });
+  // deadline: staff's request must be answered before the box's gateway gives up on it (60 s).
+  const within = (ms: number) => (o.deadline != null ? Math.max(1000, Math.min(ms, o.deadline - now())) : ms);
+  const get = (u: string, timeoutMs: number) => http({ url: u, headers: { accept: "*/*" }, timeoutMs: within(timeoutMs), maxBytes: 160 * 1024 * 1024 });
   const t0 = now();
   const fail = (problem: string): WarmResult => ({ ok: false, problem, firstMs: now() - t0 });
   try {
@@ -70,6 +72,8 @@ export async function warmHls(http: Http, url: string, startAt = 0, o: { now?: (
     const t1 = now();
     let sec = 0;
     for (const s of segs.slice(i + 1, i + 3)) {
+      // Out of time: what was measured so far has to do.
+      if (o.deadline != null && o.deadline - now() < 4000) break;
       const r = await get(s.url, 40_000);
       if (r.status !== 200) return { ok: false, problem: `the server stopped converting it (it answered ${r.status})`, firstMs };
       sec += s.sec;

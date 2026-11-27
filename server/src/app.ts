@@ -122,7 +122,7 @@ export async function createApp(o: AppOptions): Promise<MoviesApp> {
     pollMs: o.pollMs,
     onFinished: (displayId) => vote.finished(displayId),
     // The same pinned connection the app browses the server with. Never logs the link.
-    warm: (url, startAt) => warmHls(http, url, startAt, o.warmSlowStartMs != null ? { slowStartMs: o.warmSlowStartMs } : {}),
+    warm: (url, startAt, deadline) => warmHls(http, url, startAt, { ...(o.warmSlowStartMs != null ? { slowStartMs: o.warmSlowStartMs } : {}), ...(deadline != null ? { deadline } : {}) }),
     ...(o.noPictureMs != null ? { noPictureMs: o.noPictureMs } : {}),
   });
   // The guest vote: the winner goes on through the same player as a staff pick.

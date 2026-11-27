@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.1 (2026-11-27)
+- The "playing for a minute with no place in the movie" fallback now only applies to a TV
+  that has reported its place at least once since the app started. A player that never
+  reports one (to be checked on the Apple TV) is no longer restarted at 1080p for it; an
+  error from the TV still falls back.
+- A log line per play says how many seconds the TV took to report its place.
+- Getting a stream ready is held to 48 s in all, so staff get an answer in words before the
+  box's gateway gives up on the request (60 s).
+
 ## 0.6.0 (2026-11-27)
 - **Picture quality.** Staff pick Auto, Original, 1080p or 720p before a movie starts (the
   details sheet) and change it while it plays (the remote; the stream starts again at the
