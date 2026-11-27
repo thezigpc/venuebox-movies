@@ -27,6 +27,10 @@ Three pages:
   laid out for a phone, an iPad upright, and an iPad on its side.
 - **Settings** (`/admin`).
 
+**Picture quality:** Auto (the default) plays the best the TV takes and falls back to 1080p
+when the server can't convert 4K fast enough or the TV won't show it. Staff can also pick
+Original (never shrunk), 1080p or 720p, before or during a movie.
+
 **With no media server**, the app still runs the guest page: staff type tonight's movies and
 the movies for a vote by hand, and put the winner on themselves.
 

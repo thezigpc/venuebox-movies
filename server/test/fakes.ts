@@ -27,7 +27,7 @@ export const ADMIN_PW = "admin-password-123";
 type J = Record<string, unknown>;
 
 const stream = (type: string, codec: string, extra: J = {}) => ({ Type: type, Codec: codec, ...extra });
-const MOVIES: J[] = [
+export const MOVIES: J[] = [
   {
     Id: "m1",
     Name: "Big Movie",
@@ -83,13 +83,19 @@ export interface FakeJellyfin {
   isAdmin: boolean;
   /** Slows PlaybackInfo down (ms), to test what happens meanwhile. */
   playbackDelayMs: number;
+  /** The HLS: how long a part takes to arrive (ms), its status, and how many seconds each holds. */
+  segmentMs: (u: URL, index: number) => number;
+  segmentStatus: (u: URL, index: number) => number;
+  segmentSec: number;
+  /** The parts asked for, as "<MaxHeight>:<index>". */
+  segments: string[];
   close(): Promise<void>;
 }
 
 /** A pretend Jellyfin. basePath: served under it (a reverse proxy's /jellyfin). tls: https with the self-signed fixture. */
 export async function fakeJellyfin(o: { basePath?: string; tls?: boolean } = {}): Promise<FakeJellyfin> {
   const base = o.basePath ?? "";
-  const jf: FakeJellyfin = { url: "", requests: [], reports: [], serverId: "server-1", isAdmin: false, playbackDelayMs: 0, close: async () => undefined };
+  const jf: FakeJellyfin = { url: "", requests: [], reports: [], serverId: "server-1", isAdmin: false, playbackDelayMs: 0, segmentMs: () => 0, segmentStatus: () => 200, segmentSec: 6, segments: [], close: async () => undefined };
   const handler = (req: http.IncomingMessage, res: http.ServerResponse) => {
     let raw = "";
     req.on("data", (c) => (raw += c));
@@ -112,6 +118,22 @@ export async function fakeJellyfin(o: { basePath?: string; tls?: boolean } = {})
         if (!byId(p.split("/")[2]!)) return void res.writeHead(404).end();
         res.writeHead(200, { "content-type": "image/jpeg" });
         return void res.end(Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]));
+      }
+      // The HLS a TV (or our warm-up) fetches: the key is in the link, as on the real server.
+      const hls = /^\/videos\/([^/]+)\/(master\.m3u8|main\.m3u8|hls1\/main\/(\d+)\.mp4)$/.exec(p);
+      if (hls) {
+        if (q.get("ApiKey") !== TOKEN) return void res.writeHead(401).end();
+        if (hls[2] === "master.m3u8") return void res.writeHead(200, { "content-type": "application/vnd.apple.mpegurl" }).end(`#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=5000000\nmain.m3u8${u.search}\n`);
+        if (hls[2] === "main.m3u8") {
+          const parts = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => `#EXTINF:${jf.segmentSec},\nhls1/main/${i}.mp4${u.search}`).join("\n");
+          return void res.writeHead(200, { "content-type": "application/vnd.apple.mpegurl" }).end(`#EXTM3U\n#EXT-X-TARGETDURATION:6\n${parts}\n#EXT-X-ENDLIST\n`);
+        }
+        const i = Number(hls[3]);
+        jf.segments.push(`${q.get("MaxHeight")}:${i}`);
+        const wait = jf.segmentMs(u, i);
+        if (wait) await new Promise((r) => setTimeout(r, wait));
+        const status = jf.segmentStatus(u, i);
+        return void res.writeHead(status, { "content-type": "video/mp4" }).end(status === 200 ? Buffer.alloc(64) : "");
       }
       // Everything else needs our token.
       if (!auth.includes(`Token="${TOKEN}"`)) return void res.writeHead(401).end();
@@ -146,7 +168,8 @@ export async function fakeJellyfin(o: { basePath?: string; tls?: boolean } = {})
         const it = byId(pb[1]!) as J | undefined;
         const src = (it?.MediaSources as J[] | undefined)?.[0];
         if (!src) return json({ ErrorCode: "NoCompatibleStream" });
-        const prof = (body?.DeviceProfile ?? {}) as { DirectPlayProfiles?: { Container: string; VideoCodec: string; AudioCodec: string }[]; TranscodingProfiles?: { Container: string }[] };
+        const prof = (body?.DeviceProfile ?? {}) as { DirectPlayProfiles?: { Container: string; VideoCodec: string; AudioCodec: string }[]; TranscodingProfiles?: { Container: string }[]; CodecProfiles?: { Conditions?: { Property: string; Value: string }[] }[] };
+        const maxHeight = prof.CodecProfiles?.flatMap((c) => c.Conditions ?? []).find((c) => c.Property === "Height")?.Value ?? "";
         const streams = src.MediaStreams as J[];
         const v = streams.find((s) => s.Type === "Video");
         const a = streams.find((s) => s.Type === "Audio");
@@ -169,7 +192,7 @@ export async function fakeJellyfin(o: { basePath?: string; tls?: boolean } = {})
               ...src,
               SupportsDirectPlay: direct,
               SupportsTranscoding: true,
-              ...(direct ? {} : { TranscodingUrl: `/videos/${pb[1]}/master.m3u8?MediaSourceId=${pb[1]}&SegmentContainer=${seg}&VideoBitrate=${body?.MaxStreamingBitrate}&AudioStreamIndex=${audioIdx}${subIdx != null ? `&SubtitleStreamIndex=${subIdx}` : ""}&SubtitleMethod=Encode&TranscodeReasons=${dp ? (body?.EnableDirectPlay === false && withinRate ? "DirectPlayError" : "ContainerBitrateExceedsLimit") : "ContainerNotSupported"},SubtitleCodecNotSupported&ApiKey=${TOKEN}` }),
+              ...(direct ? {} : { TranscodingUrl: `/videos/${pb[1]}/master.m3u8?MediaSourceId=${pb[1]}&SegmentContainer=${seg}&MaxHeight=${maxHeight}&VideoBitrate=${body?.MaxStreamingBitrate}&AudioStreamIndex=${audioIdx}${subIdx != null ? `&SubtitleStreamIndex=${subIdx}` : ""}&SubtitleMethod=Encode&TranscodeReasons=${dp ? (body?.EnableDirectPlay === false && withinRate ? "DirectPlayError" : "ContainerBitrateExceedsLimit") : "ContainerNotSupported"},SubtitleCodecNotSupported&ApiKey=${TOKEN}` }),
             },
           ],
         });
@@ -282,11 +305,11 @@ export interface TestApp {
   close(): Promise<void>;
 }
 
-export async function startApp(o: { core?: FakeCore; video?: VideoOut } = {}): Promise<TestApp> {
+export async function startApp(o: { core?: FakeCore; video?: VideoOut; warmSlowStartMs?: number; noPictureMs?: number } = {}): Promise<TestApp> {
   const dir = await mkdtemp(path.join(os.tmpdir(), "movies-test-"));
   const bg = makeBarGames({ defaultName: "Movies", ...(o.core ? { coreUrl: o.core.url, token: CORE_TOKEN } : {}) });
   const tvs = new FakeTvs();
-  const app = await createApp({ dataDir: dir, bg, adminPassword: ADMIN_PW, video: o.video ?? tvs, http: createHttp(), pollMs: 60_000 });
+  const app = await createApp({ dataDir: dir, bg, adminPassword: ADMIN_PW, video: o.video ?? tvs, http: createHttp(), pollMs: 60_000, warmSlowStartMs: o.warmSlowStartMs ?? 60_000, ...(o.noPictureMs != null ? { noPictureMs: o.noPictureMs } : {}) });
   const server = http.createServer(app.app);
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;

@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { Card, ItemDetail, Library, Page, PublicState, StaffState } from "@movies/shared";
 import { Vote } from "../src/vote.js";
-import { connect, fakeJellyfin, PASSWORD, startApp, TOKEN, USER, type FakeJellyfin, type TestApp } from "./fakes.js";
+import { connect, fakeJellyfin, PASSWORD, startApp, TOKEN, USER, type FakeJellyfin, type TestApp, MOVIES } from "./fakes.js";
 
 // Every log line any test produces: none may carry the token.
 const lines: string[] = [];
@@ -22,6 +22,7 @@ after(() => {
 });
 
 let jf: FakeJellyfin;
+type J = Record<string, unknown>;
 let t: TestApp;
 beforeEach(async () => {
   jf = await fakeJellyfin({ basePath: "/jellyfin" });
@@ -411,6 +412,153 @@ describe("playing", () => {
     assert.ok(r.body.value.reasons.includes("subtitles burned in"));
     assert.match(last().url, /SubtitleStreamIndex=4&SubtitleMethod=Encode/);
     assert.equal((await state()).tvs.find((x) => x.displayId === "atv")!.now!.subtitleIndex, 4);
+  });
+
+  // ---- quality: 4K, the server's speed, and the 1080p fallback
+  /** Makes the MKV (m2) a 4K file for one test. */
+  const as4k = () => {
+    const v = ((MOVIES.find((m) => m.Id === "m2")!.MediaSources as J[])[0]!.MediaStreams as J[]).find((s) => s.Type === "Video")!;
+    Object.assign(v, { Width: 3840, Height: 2160 });
+    return () => void Object.assign(v, { Width: 1920, Height: 1080 });
+  };
+  const nowOn = async (id: string) => (await state()).tvs.find((x) => x.displayId === id)!.now!;
+
+  test("the stream is started on the server before the TV gets it; a failure is said in words", async () => {
+    jf.segments.length = 0;
+    await play("atv", "m2");
+    assert.deepEqual(jf.segments, ["2160:0"], "the first part was fetched once, and no more when it's quick");
+    jf.segmentStatus = () => 500;
+    const plays = t.tvs.plays.length;
+    const r = await play("atv", "m2");
+    jf.segmentStatus = () => 200;
+    assert.equal(r.status, 502);
+    assert.match(r.body.error!, /couldn't get that ready for Bar Apple TV.*answered 500/);
+    assert.doesNotMatch(r.body.error!, /ApiKey|http/);
+    assert.equal(t.tvs.plays.length, plays, "the TV was never handed a stream that doesn't work");
+  });
+
+  test("a resume point: the part the TV will ask for is the one started", async () => {
+    jf.segments.length = 0;
+    await play("atv", "m2");
+    t.tvs.statuses.set("atv", { state: "playing", position: 20 });
+    await t.app.player.tick();
+    await t.api("POST", "/api/admin/tvs/atv/tracks", { audioIndex: 2 });
+    assert.equal(last().startAt, 17);
+    assert.equal(jf.segments.at(-1), "2160:2", "17 s in is the third 6-second part");
+  });
+
+  test("4K with subtitles burned in is shrunk to 1080p (auto)", async () => {
+    const undo = as4k();
+    try {
+      const r = await play("atv", "m2", { subtitleIndex: 4 });
+      assert.equal(r.status, 200);
+      assert.match(last().url, /MaxHeight=1080/);
+      assert.match(last().url, /SubtitleStreamIndex=4/);
+      assert.ok(r.body.value.reasons.some((x) => /shrunk to 1080p \(burning subtitles into 4K is too slow\)/.test(x)), r.body.value.reasons.join("; "));
+      const n = await nowOn("atv");
+      assert.equal(n.shrunkTo, 1080);
+      assert.equal(n.quality, "auto");
+      // Asked for as it is: no shrinking.
+      await play("atv", "m2", { subtitleIndex: 4, quality: "original" });
+      assert.match(last().url, /MaxHeight=2160/);
+      assert.equal((await nowOn("atv")).shrunkTo, undefined);
+    } finally {
+      undo();
+    }
+  });
+
+  test("a server that converts 4K too slowly: 1080p instead; original keeps 4K", async () => {
+    const undo = as4k();
+    const slow = await startApp({ warmSlowStartMs: 40 });
+    try {
+      await connect(slow, jf);
+      jf.segmentSec = 0.02;
+      jf.segmentMs = (u) => (u.searchParams.get("MaxHeight") === "2160" ? 90 : 0);
+      jf.segments.length = 0;
+      jf.reports.length = 0;
+      const r = await slow.api<{ value: { reasons: string[] } }>("POST", "/api/admin/play", { displayId: "atv", itemId: "m2" });
+      assert.equal(r.status, 200);
+      assert.match(slow.tvs.plays.at(-1)!.args.url, /MaxHeight=1080/);
+      assert.ok(r.body.value.reasons.some((x) => /shrunk to 1080p \(the server converts 4K too slowly\)/.test(x)), r.body.value.reasons.join("; "));
+      assert.deepEqual(jf.segments.slice(0, 3), ["2160:0", "2160:1", "2160:2"], "timed over the next two parts");
+      assert.ok(jf.reports.some((x) => x.kind === "/Encodings"), "the 4K conversion was ended on the server");
+      await slow.api("POST", "/api/admin/play", { displayId: "atv", itemId: "m2", quality: "original" });
+      assert.match(slow.tvs.plays.at(-1)!.args.url, /MaxHeight=2160/, "staff asked for the original: it stays 4K");
+    } finally {
+      jf.segmentSec = 6;
+      jf.segmentMs = () => 0;
+      undo();
+      await slow.close();
+    }
+  });
+
+  test("a TV that shows nothing for the 4K stream gets it once more at 1080p", async () => {
+    const undo = as4k();
+    const own = await startApp({ noPictureMs: 0 });
+    const t = own;
+    const last = () => t.tvs.plays.at(-1)!.args;
+    const nowOn = async (id: string) => (await t.api<StaffState>("GET", "/api/admin/state")).body.tvs.find((x) => x.displayId === id)!.now!;
+    try {
+      await connect(t, jf);
+      await t.api("POST", "/api/admin/play", { displayId: "atv", itemId: "m2" });
+      assert.match(last().url, /MaxHeight=2160/);
+      const plays = t.tvs.plays.length;
+      // The Apple TV's "no" sign: it says playing, with no place in the movie.
+      t.tvs.statuses.set("atv", { state: "playing" });
+      await t.app.player.tick();
+      assert.equal(t.tvs.plays.length, plays + 1);
+      assert.match(last().url, /MaxHeight=1080/);
+      assert.equal((await nowOn("atv")).shrunkTo, 1080);
+      // Only once: a second failure is an error, not a loop.
+      t.tvs.statuses.set("atv", { state: "error", message: "nope" });
+      await t.app.player.tick();
+      assert.equal(t.tvs.plays.length, plays + 1);
+      assert.equal((await nowOn("atv")).state, "error");
+    } finally {
+      undo();
+      await own.close();
+    }
+  });
+
+  test("a TV's error on a 4K stream: 1080p is tried before giving up", async () => {
+    const undo = as4k();
+    try {
+      await play("atv", "m2");
+      const plays = t.tvs.plays.length;
+      t.tvs.statuses.set("atv", { state: "error", message: "can't decode" });
+      await t.app.player.tick();
+      assert.equal(t.tvs.plays.length, plays + 1);
+      assert.match(last().url, /MaxHeight=1080/);
+    } finally {
+      undo();
+    }
+  });
+
+  test("staff pick a quality before playing and change it while playing", async () => {
+    const undo = as4k();
+    try {
+      await play("atv", "m2", { quality: "720" });
+      assert.match(last().url, /MaxHeight=720/);
+      assert.equal((await nowOn("atv")).quality, "720");
+      assert.equal((await nowOn("atv")).shrunkTo, 720);
+      t.tvs.statuses.set("atv", { state: "playing", position: 600 });
+      await t.app.player.tick();
+      const r = await t.api<{ value: { quality: string } }>("POST", "/api/admin/tvs/atv/quality", { quality: "1080" });
+      assert.equal(r.status, 200);
+      assert.equal(r.body.value.quality, "1080");
+      assert.match(last().url, /MaxHeight=1080/);
+      assert.equal(last().startAt, 597, "it picks up where it was");
+      assert.equal((await t.api("POST", "/api/admin/tvs/atv/quality", { quality: "8k" })).status, 400);
+      assert.equal((await t.api("POST", "/api/admin/tvs/roku/quality", { quality: "720" })).status, 409, "nothing playing there");
+    } finally {
+      undo();
+    }
+  });
+
+  test("a 1080p file isn't touched by the 1080p choice", async () => {
+    const r = await play("roku", "m2", { quality: "1080" });
+    assert.equal(r.body.value.method, "direct");
+    assert.equal((await nowOn("roku")).shrunkTo, undefined);
   });
 
   test("a track that isn't in the file is ignored (plays the defaults)", async () => {

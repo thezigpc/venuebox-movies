@@ -73,6 +73,13 @@ export interface Tracks {
  * Which tracks to play. Audio: a stream index; absent plays the default. Subtitles: a stream
  * index to burn in; null or absent: none.
  */
+/**
+ * The picture quality staff ask for. auto: the best the TV takes, shrunk to 1080p when the
+ * server can't convert 4K fast enough or the TV refuses it. original: never shrunk.
+ */
+export type Quality = "auto" | "original" | "1080" | "720";
+export const QUALITIES: readonly Quality[] = ["auto", "original", "1080", "720"];
+
 export interface TrackChoice {
   audioIndex?: number;
   subtitleIndex?: number | null;
@@ -112,6 +119,10 @@ export interface NowPlaying {
   audioIndex?: number;
   /** The subtitle burned in, or null for none. */
   subtitleIndex?: number | null;
+  /** What staff asked for. */
+  quality?: Quality;
+  /** The picture is shrunk to this height (staff's choice, or auto's fallback). */
+  shrunkTo?: number;
 }
 
 /** A box TV that can play video. */

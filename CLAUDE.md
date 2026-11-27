@@ -33,6 +33,7 @@ doubletake or screen capture for movies.
   - `plex.ts`: stub, with notes for building it.
 - `server/src/http.ts`: node:http/https, with a SHA-256 certificate pin (a pinned TLS socket
   passed as `createConnection`; **no `agent`** with it) and `probeCertificate`.
+- `server/src/warm.ts`: starts and times the server's HLS before the TV gets it.
 - `server/src/video.ts`:
   - the box's video calls (`bg.playVideo/videoControl/videoStatus`, detected at run time);
   - the dev fake (`MOVIES_FAKE_TVS=1`), which fetches the link to prove it works.
@@ -83,7 +84,12 @@ doubletake or screen capture for movies.
 - Events: standard `video_started { tv, title }` / `video_stopped { tv }`.
 - SDK 0.18.2: `kind: "local"` (a screen on the box, mpv). `formats` wins whatever the kind
   (`profileFor`, `canSeek`).
-- Vendored SDK 0.19.0 (Movies 0.5.3).
+- Vendored SDK 0.19.0 (Movies 0.6.0).
+- Quality (0.6.0): `Quality` auto | original | 1080 | 720 (`Session.quality`, `shrink()` in
+  player.ts caps the TV profile). `server/src/warm.ts` fetches the HLS part the TV will ask
+  for first and times it (`Player` option `warm`); auto falls back to 1080p for burned-in
+  subtitles on 4K, a slow conversion, or a TV that shows nothing (`fallBack`, once per item).
+  The warm-up fetches the stream link: never log it.
 - The user's rule: nothing plays on a TV by itself unless staff chose that. A vote's winner
   waits for staff by default (`autoPlay` is opt-in).
 - `/api/public/state` adds `staff: true` when `bg.isStaff(req)`: the guest page then shows

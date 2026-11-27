@@ -1,4 +1,4 @@
-# Bar Games integration report: Movies 0.5.3
+# Bar Games integration report: Movies 0.6.0
 
 - **Level:** 3, an app and a media provider.
 - **SDK:** 0.19.0.

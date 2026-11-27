@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { BoxAdminLink, VenueAnnouncement } from "@bargames/gamekit/client";
 import { bgUrl } from "@bargames/sdk/client";
-import { clock, runtime, type Card, type FileDetails, type Library, type StaffState, type TvInfo, type VoteCloses, type VoteStaff } from "@movies/shared";
+import { clock, QUALITIES, runtime, type Card, type FileDetails, type Library, type Quality, type StaffState, type TvInfo, type VoteCloses, type VoteStaff } from "@movies/shared";
 import { api, ApiError, img, type ControlAction, type ItemWithFit } from "../api";
 import { AuthGate, useStaffAuth } from "../components/Auth";
 import { IconBack, IconCheck, IconDown, IconGear, IconPause, IconPlay, IconPlus, IconSearch, IconStop, IconUp, IconVote, IconX } from "../components/Icons";
@@ -234,6 +234,49 @@ function TrackButtons({ tv, notify, reload }: { tv: TvInfo; notify: Notify; relo
   );
 }
 
+const QUALITY_WORDS: Record<Quality, string> = {
+  auto: "Auto: the best that plays",
+  original: "Original: never shrunk",
+  "1080": "1080p",
+  "720": "720p",
+};
+
+/** The picture quality: a list to pick from. `note`: what Auto is doing right now. */
+function QualityField({ value, onChange, disabled, note }: { value: Quality; onChange: (q: Quality) => void; disabled?: boolean; note?: string }) {
+  return (
+    <label className="mv-field mv-quality">
+      <span className="mv-field-label">Quality{note ? ` · ${note}` : ""}</span>
+      <select value={value} disabled={disabled} onChange={(e) => onChange(e.target.value as Quality)}>
+        {QUALITIES.map((q) => (
+          <option key={q} value={q}>
+            {QUALITY_WORDS[q]}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+/** The quality of what's playing: changing it starts the stream again at the same spot. */
+function QualityButton({ tv, notify, reload }: { tv: TvInfo; notify: Notify; reload: () => Promise<void> }) {
+  const n = tv.now!;
+  const [busy, setBusy] = useState(false);
+  if (n.state === "error") return null;
+  const change = async (q: Quality) => {
+    setBusy(true);
+    try {
+      await api.quality(tv.displayId, q);
+      notify(tv.canSeek ? `Changing the quality on ${tv.name}: it picks up where it was.` : `Changing the quality on ${tv.name}: it starts again from the beginning.`);
+      await reload();
+    } catch (err) {
+      notify(err instanceof Error ? err.message : "That didn't change.", true);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return <QualityField value={n.quality ?? "auto"} onChange={(q) => void change(q)} disabled={busy} {...(n.shrunkTo ? { note: `${n.shrunkTo}p now` } : {})} />;
+}
+
 /** The vote's winner waiting for this TV. */
 function UpNext({ tv, vote, r }: { tv: TvInfo; vote: VoteStaff; r: ReturnType<typeof useRemote> }) {
   if (!vote.winner || vote.winnerDisplayId !== tv.displayId) return null;
@@ -284,6 +327,7 @@ function Remote({ tv, vote, variant, notify, reload }: { tv: TvInfo; vote: VoteS
       <Scrubber tv={tv} onSeek={(s) => void r.seek(s)} disabled={r.busy || n.state === "error"} />
       <Transport tv={tv} r={r} big={variant === "full"} />
       <TrackButtons tv={tv} notify={notify} reload={reload} />
+      <QualityButton tv={tv} notify={notify} reload={reload} />
       <UpNext tv={tv} vote={vote} r={r} />
       <button className="mv-stop" disabled={r.busy} onClick={() => void r.control("stop")}>
         <IconStop size={14} /> Stop {tv.name}
@@ -573,6 +617,7 @@ function Details({ id, tvs, tv, onTv, onOpen, onClose, notify, reload, phone }: 
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [picked, setPicked] = useState<Picked>({ sub: null });
+  const [quality, setQuality] = useState<Quality>("auto");
   useEffect(() => {
     setItem(null);
     setError("");
@@ -591,7 +636,7 @@ function Details({ id, tvs, tv, onTv, onOpen, onClose, notify, reload, phone }: 
     if (!item || !target) return;
     setBusy(true);
     try {
-      const r = await api.play(target.displayId, item.id, resume, tracks ? toChoice(tracks, picked) : {});
+      const r = await api.play(target.displayId, item.id, resume, tracks ? toChoice(tracks, picked) : {}, quality);
       notify(`Playing ${r.title} on ${target.name}.`);
       await reload();
       onClose();
@@ -669,6 +714,14 @@ function Details({ id, tvs, tv, onTv, onOpen, onClose, notify, reload, phone }: 
               <>
                 <h3 className="mv-h">Sound and subtitles</h3>
                 <TrackPicker tracks={tracks} value={picked} onChange={setPicked} is4k={(item.file?.video?.height ?? 0) > 1100} disabled={busy} native={target.tracksNative} {...(fit ? { direct: fit.direct } : {})} />
+              </>
+            )}
+            {item.playable && target && (
+              <>
+                <h3 className="mv-h">Picture quality</h3>
+                <QualityField value={quality} onChange={setQuality} disabled={busy} />
+                {quality === "auto" && (item.file?.video?.height ?? 0) > 1100 && <p className="tracks-note">Auto plays this 4K movie in 4K when it can, and in 1080p when the server or the TV can't keep up. With subtitles drawn into the picture, it's 1080p.</p>}
+                {quality === "original" && <p className="tracks-note">Original never shrinks the picture. If the server or the TV can't keep up, it won't play.</p>}
               </>
             )}
             {!tvs.length && item.playable && <p className="muted">No TV here can play videos yet.</p>}
@@ -829,7 +882,7 @@ function Banner({ state }: { state: StaffState }) {
   if (p === "standalone") return <p className="banner">This copy isn't on a Bar Games box, so it can't play on TVs. Browsing still works.</p>;
   if (p === "box-too-old") return <p className="banner">This box can't hand videos to TVs yet: it needs a box update with video playback.</p>;
   if (state.video.fake) return <p className="banner dev">Dev mode: pretend TVs. Each play checks the stream link really works.</p>;
-  if (!state.tvs.length) return <p className="banner">The box has no TVs that can play videos. Movies plays on Apple TVs and Rokus (box 0.27.0 or newer) and Venuebox apps (box 0.28.0 or newer).</p>;
+  if (!state.tvs.length) return <p className="banner">The box has no TVs that can play videos. Movies plays on Apple TVs, Venuebox apps and a screen plugged into the box.</p>;
   return null;
 }
 

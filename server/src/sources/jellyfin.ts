@@ -564,6 +564,7 @@ export class JellyfinSource implements MediaSource {
         ...(typeof audioOn === "number" ? { audioIndex: audioOn } : {}),
         subtitleIndex: subOn,
         burned: null,
+        ...(details.video?.height ? { sourceHeight: details.video.height } : {}),
         ...(native ? { tracks: this.nativeTracks(id, src, { direct: true, audioOn, subtitleOn: subOn, defAudio }, auth.token) } : {}),
       };
     }
@@ -592,6 +593,7 @@ export class JellyfinSource implements MediaSource {
       ...(typeof audioOn === "number" ? { audioIndex: audioOn } : {}),
       subtitleIndex: subOn,
       burned,
+      ...(details.video?.height ? { sourceHeight: details.video.height } : {}),
       ...(native ? { tracks: this.nativeTracks(id, src, { direct: false, audioOn, subtitleOn: subOn, defAudio }, auth.token) } : {}),
     };
   }

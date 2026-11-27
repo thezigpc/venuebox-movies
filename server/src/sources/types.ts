@@ -63,6 +63,8 @@ export interface Playback {
   burned: number | null;
   /** For a native player: every track, with where it is in this stream. */
   tracks?: NativeTracks;
+  /** The file's picture height (2160 for 4K), when the server says. */
+  sourceHeight?: number;
 }
 
 export interface PlaySession {

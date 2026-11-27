@@ -4,9 +4,10 @@
 // so its "now playing" and resume points stay right. Emits video_started / video_stopped,
 // with the TV's name and the title only: never a link.
 
-import { audioTrackId, effectiveProfile, profileFor, subtitleTrackId, trackIndexOf, type ItemDetail, type NowPlaying, type TrackChoice, type Tracks, type TvInfo, type TvProfile, type TvProfileId, type TvState } from "@movies/shared";
+import { audioTrackId, effectiveProfile, profileFor, subtitleTrackId, trackIndexOf, type ItemDetail, type NowPlaying, type Quality, type TrackChoice, type Tracks, type TvInfo, type TvProfile, type TvProfileId, type TvState } from "@movies/shared";
+import type { WarmResult } from "./warm.js";
 import { log } from "./log.js";
-import type { MediaSource, PlaySession } from "./sources/types.js";
+import type { MediaSource, PlaySession, Playback } from "./sources/types.js";
 import { SourceError } from "./sources/types.js";
 import type { Store } from "./store.js";
 import type { VideoAction, VideoOut, VideoRemote, VideoTv } from "./video.js";
@@ -45,6 +46,12 @@ interface Current {
   burned: number | null;
   /** The TV's player switches tracks itself (SDK 0.19.0). */
   native: boolean;
+  /** The file is above 1080p and this TV is sent it that way. */
+  big: boolean;
+  /** The picture is shrunk to this height. */
+  shrunkTo?: number;
+  /** The TV reported a place in the movie at least once. */
+  gotPosition: boolean;
   /** The last audio and subtitle the TV reported, to spot changes made on the TV. */
   seenAudio?: string;
   seenSubtitle?: string | null;
@@ -109,6 +116,10 @@ interface Session {
   prefs?: TrackPrefs;
   /** Staff's choice before the queue's first item was looked up. */
   firstChoice?: TrackChoice;
+  /** The picture quality staff asked for (absent: auto). */
+  quality?: Quality;
+  /** Auto fell back to 1080p for this item (the server was too slow, or the TV refused 4K). */
+  cap1080?: string;
   /** Starting or switching a stream: the poller leaves it alone (it has no current yet). */
   busy?: boolean;
   /** Shown for a while after something went wrong. */
@@ -128,9 +139,24 @@ export interface PlayerOptions {
   startTimeoutMs?: number;
   /** A TV's movie (or its whole queue) ended by itself: not stopped, not an error. */
   onFinished?: (displayId: string) => Promise<void> | void;
+  /** Fetches the start of the server's HLS before the TV does, and times it (warm.ts). */
+  warm?: (url: string, startAt?: number) => Promise<WarmResult>;
+  /** A TV in "playing" with no place in the movie after this long hasn't got a picture. */
+  noPictureMs?: number;
+}
+
+/** Below this many seconds of video per second, a conversion can't be trusted to keep up. */
+const MIN_SPEED = 1.5;
+
+/** The TV's profile with the picture held to a height (the server shrinks anything bigger). */
+export function shrink(p: TvProfile, height: 1080 | 720): TvProfile {
+  if (p.maxHeight <= height) return p;
+  return { ...p, maxHeight: height, maxWidth: height === 1080 ? 1920 : 1280, maxBitrate: Math.min(p.maxBitrate, height === 1080 ? 40_000_000 : 8_000_000) };
 }
 
 export interface PlayOptions extends TrackChoice {
+  /** The picture quality (default auto). It stays for the rest of a series or collection. */
+  quality?: Quality;
   /** Start from the server's resume point (part-watched). Default true. */
   resume?: boolean;
 }
@@ -238,6 +264,8 @@ export class Player {
       ...(c.tracks ? { tracks: c.tracks } : {}),
       ...(c.audioIndex != null ? { audioIndex: c.audioIndex } : {}),
       subtitleIndex: c.subtitleIndex,
+      quality: s.quality ?? "auto",
+      ...(c.shrunkTo ? { shrunkTo: c.shrunkTo } : {}),
     };
   }
 
@@ -269,7 +297,7 @@ export class Player {
     // A new pick replaces whatever was on that TV.
     await this.end(displayId, { emit: false, stopTv: false });
     const choice: TrackChoice = { ...(opts.audioIndex != null ? { audioIndex: opts.audioIndex } : {}), ...(opts.subtitleIndex != null ? { subtitleIndex: opts.subtitleIndex } : {}) };
-    const s: Session = { displayId, tvName: tv.name, originId: itemId, label: q.label, queue: q.ids, index: 0, current: null, ...(Object.keys(choice).length ? { firstChoice: choice } : {}) };
+    const s: Session = { displayId, tvName: tv.name, originId: itemId, label: q.label, queue: q.ids, index: 0, current: null, ...(Object.keys(choice).length ? { firstChoice: choice } : {}), ...(opts.quality && opts.quality !== "auto" ? { quality: opts.quality } : {}) };
     this.sessions.set(displayId, s);
     s.busy = true;
     try {
@@ -298,8 +326,43 @@ export class Player {
     // Venuebox app that says it can't seek.
     const startAt = !canSeek(tv) ? undefined : o.at != null ? (o.at > 5 ? o.at : undefined) : resume && item.resumeSec && item.resumeSec > 30 ? item.resumeSec : undefined;
     const native = tv.formats?.tracks === true;
-    const pb = await source.playback(id, profile, { startAt, ...tracks, native });
     const title = item.kind === "episode" && item.seriesTitle ? `${item.seriesTitle}: ${item.title}` : item.title;
+    // Quality. Staff's 1080p or 720p is a plain cap. Auto sends the best the TV takes, and
+    // falls back to 1080p when that can't work: subtitles burned into 4K (the server converts
+    // the whole picture, too slowly at 4K), a conversion that can't keep up, or a TV that
+    // refuses the 4K stream (pollOne). Original never falls back.
+    const quality = s.quality ?? "auto";
+    const auto = quality === "auto";
+    let cap: 1080 | 720 | undefined = quality === "1080" ? 1080 : quality === "720" ? 720 : auto && s.cap1080 === id ? 1080 : undefined;
+    const ask = () => source.playback(id, cap ? shrink(profile, cap) : profile, { startAt, ...tracks, native });
+    const drop = (old: Playback) => (old.directPlay ? Promise.resolve() : source.reportStop(old.session, { positionSec: old.startAt ?? 0 }).catch(() => undefined));
+    let pb = await ask();
+    const above = (h: number) => profile.maxHeight > h && (pb.sourceHeight ?? 0) > h;
+    let why: string | undefined = auto && cap ? "4K didn't play" : undefined;
+    if (auto && !cap && above(1080) && pb.burned != null) {
+      cap = 1080;
+      why = "burning subtitles into 4K is too slow";
+      pb = await ask();
+    }
+    if (!pb.directPlay && this.o.warm) {
+      let w = await this.o.warm(pb.url, pb.startAt);
+      if (auto && !cap && above(1080) && (!w.ok || (w.speed != null && w.speed < MIN_SPEED))) {
+        log.warn("player", "4K is too much for the server: falling back to 1080p", { tv: tv.name, title, problem: w.problem, firstMs: w.firstMs, speed: w.speed });
+        why = w.ok ? "the server converts 4K too slowly" : "the server couldn't convert it in 4K";
+        await drop(pb);
+        cap = 1080;
+        pb = await ask();
+        w = await this.o.warm(pb.url, pb.startAt);
+      }
+      if (!w.ok) {
+        await drop(pb);
+        throw new PlayError(`The media server couldn't get that ready for ${tv.name}: ${w.problem ?? "it didn't answer"}.`, 502);
+      }
+      if (w.speed != null && w.speed < 1) log.warn("player", "the server converts this slower than it plays", { tv: tv.name, title, speed: w.speed });
+    }
+    const big = above(1080) && !cap;
+    const shrunkTo = cap && above(cap) ? cap : undefined;
+    if (shrunkTo) pb = { ...pb, reasons: [`shrunk to ${shrunkTo}p${why ? ` (${why})` : ""}`, ...pb.reasons.filter((r) => !/ is above /.test(r))] };
     const poster = source.tvPosterUrl(id);
     const r = await this.o.video.play(tv.id, { url: pb.url, mime: pb.mime, title, ...(poster ? { poster } : {}), ...(pb.startAt ? { startAt: pb.startAt } : {}), ...(pb.tracks ? { tracks: pb.tracks } : {}) });
     if (!r.ok) throw new PlayError(r.message || reasonWords(r.reason) || `${tv.name} didn't take the video${r.reason ? ` (${r.reason})` : ""}.`);
@@ -323,8 +386,11 @@ export class Player {
       subtitleIndex: pb.subtitleIndex,
       burned: pb.burned,
       native,
+      big,
+      ...(shrunkTo ? { shrunkTo } : {}),
+      gotPosition: false,
     };
-    log.info("player", "playing", { tv: tv.name, title, method: pb.session.method, why: pb.reasons.join("; ") || undefined, startAt: pb.startAt, audio: pb.audioIndex, subtitle: pb.subtitleIndex ?? undefined });
+    log.info("player", "playing", { tv: tv.name, title, method: pb.session.method, why: pb.reasons.join("; ") || undefined, startAt: pb.startAt, audio: pb.audioIndex, subtitle: pb.subtitleIndex ?? undefined, quality: quality === "auto" ? undefined : quality });
     await source.reportStart(pb.session, { positionSec: pb.startAt ?? 0 }).catch((err) => log.warn("player", "report start failed", { err: String(err) }));
     if (o.emit !== false) this.o.emit("video_started", { tv: tv.name, title });
     return { title, method: pb.session.method, reasons: pb.reasons };
@@ -401,6 +467,66 @@ export class Player {
     }
     log.info("player", "tracks changed", { tv: tv.name, audio: choice.audioIndex, subtitle: choice.subtitleIndex ?? undefined, at });
     return { inPlace: false, restartedAt: at };
+  }
+
+  /**
+   * Another picture quality for what's playing and the rest of its queue. The stream starts
+   * again at the same spot (a TV that can't start part-way: from the beginning).
+   */
+  async setQuality(displayId: string, quality: Quality): Promise<{ restartedAt: number }> {
+    const s = this.sessions.get(displayId);
+    const c = s?.current;
+    if (!s || !c) throw new PlayError("Nothing is playing on that TV.");
+    if (s.busy) throw new PlayError("That TV is still switching: try again in a moment.");
+    const tv = (await this.tvs()).find((t) => t.id === displayId) ?? (await this.tvs(true)).find((t) => t.id === displayId);
+    if (!tv) throw new PlayError("The box doesn't know that TV any more.", 404);
+    const at = canSeek(tv) ? Math.max(0, Math.round(c.position) - 3) : 0;
+    const prev = { quality: s.quality, cap1080: s.cap1080 };
+    s.quality = quality === "auto" ? undefined : quality;
+    s.cap1080 = undefined;
+    s.busy = true;
+    await this.report("stop", c);
+    s.current = null;
+    try {
+      await this.startCurrent(s, tv, false, { at, emit: false });
+    } catch (err) {
+      // Put the old quality back and the movie on again, so the TV isn't left with nothing.
+      s.quality = prev.quality;
+      s.cap1080 = prev.cap1080;
+      log.warn("player", "changing quality failed", { tv: tv.name, err: String(err) });
+      await this.startCurrent(s, tv, false, { at, emit: false }).catch(() => undefined);
+      throw err;
+    } finally {
+      s.busy = false;
+    }
+    log.info("player", "quality changed", { tv: tv.name, quality, at });
+    return { restartedAt: at };
+  }
+
+  /**
+   * Auto quality: a 4K stream the TV refused, or never showed, is tried once more at 1080p.
+   * True: it was (the caller is done with this TV for now).
+   */
+  private async fallBack(s: Session, c: Current, why: string): Promise<boolean> {
+    if (!c.big || (s.quality ?? "auto") !== "auto" || s.cap1080 === c.itemId) return false;
+    const tv = (await this.tvs()).find((t) => t.id === s.displayId);
+    if (!tv) return false;
+    log.warn("player", "the TV didn't play the 4K stream: trying 1080p", { tv: s.tvName, title: c.title, why });
+    s.cap1080 = c.itemId;
+    const at = canSeek(tv) && c.position > 5 ? Math.max(0, Math.round(c.position) - 3) : 0;
+    s.busy = true;
+    try {
+      await this.report("stop", c);
+      s.current = null;
+      await this.startCurrent(s, tv, false, { at, emit: false });
+      return true;
+    } catch (err) {
+      log.warn("player", "the 1080p fallback didn't start", { tv: s.tvName, err: String(err) });
+      s.current = c;
+      return false;
+    } finally {
+      s.busy = false;
+    }
   }
 
   /**
@@ -516,8 +642,11 @@ export class Player {
     const st = await this.o.video.status(s.displayId);
     if (this.sessions.get(s.displayId) !== s || s.current !== c) return; // replaced meanwhile
     const now = this.now();
-    if (typeof st.position === "number") c.position = st.position;
+    if (typeof st.position === "number") (c.position = st.position), (c.gotPosition = true);
     if (st.duration && st.duration > 0) c.durationSec = Math.round(st.duration);
+    // "Playing" with no place in the movie: the TV took the link but shows no picture (an
+    // Apple TV shows a "no" sign and keeps saying playing).
+    if (st.state === "playing" && !c.gotPosition && now - c.startedAt >= (this.o.noPictureMs ?? 60_000) && (await this.fallBack(s, c, "no picture"))) return;
 
     if (c.native && (st.state === "playing" || st.state === "paused")) {
       // A change made on the TV itself (its remote or menu): follow it, and let the rest of a
@@ -562,6 +691,7 @@ export class Player {
       return;
     }
     if (st.state === "error") {
+      if (now - c.startedAt < 180_000 && (await this.fallBack(s, c, st.message ?? "error"))) return;
       log.warn("player", "the TV reported an error", { tv: s.tvName, title: c.title, message: st.message });
       await this.end(s.displayId, { emit: true, stopTv: false, message: st.message ? `The TV couldn't play it: ${st.message}` : "The TV couldn't play it." });
       return;

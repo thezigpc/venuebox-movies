@@ -864,3 +864,24 @@
   flex-direction: column;
   gap: 10px;
 }
+
+.mv-quality {
+  display: flex;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  cursor: pointer;
+}
+.mv-quality select {
+  width: 100%;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+.mv-quality select option {
+  color: #111;
+}

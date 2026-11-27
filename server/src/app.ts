@@ -11,6 +11,8 @@ import { adminRouter, createAdminAuth, createJsonStore, serveSpa, type AdminAuth
 import { canDirectPlay, DEFAULT_NAME, isProfileId, normaliseServerUrl, type AdminState, type CertOffer, type ServerStatus, type PublicState, type StaffState, type TestResult, type TrackChoice } from "@movies/shared";
 import { venueName } from "./bargames.js";
 import { VERSION } from "./config.js";
+import { warmHls } from "./warm.js";
+import { QUALITIES, type Quality } from "@movies/shared";
 import { createHttp, normaliseFingerprint, probeCertificate, type Http } from "./http.js";
 import { log } from "./log.js";
 import { registerMedia } from "./media.js";
@@ -38,6 +40,10 @@ export interface AppOptions {
   pollMs?: number;
   /** Tests: probe a certificate (no real TLS). */
   probeCert?: typeof probeCertificate;
+  /** Tests: what counts as a slow start when timing the server's stream. */
+  warmSlowStartMs?: number;
+  /** Tests: how long a TV may say "playing" with no place in the movie. */
+  noPictureMs?: number;
 }
 
 export interface MoviesApp {
@@ -61,6 +67,8 @@ class BadRequest extends Error {
 const str = (v: unknown, max = 500) => (typeof v === "string" ? v.trim().slice(0, max) : "");
 
 /** Audio and subtitle choice from a request: a stream index, or null for no subtitles. */
+const isQuality = (v: unknown): v is Quality => typeof v === "string" && (QUALITIES as readonly string[]).includes(v);
+
 function trackChoice(b: Record<string, unknown>): TrackChoice {
   const idx = (v: unknown) => (typeof v === "number" && Number.isInteger(v) && v >= 0 && v < 1000 ? v : undefined);
   const out: TrackChoice = {};
@@ -113,6 +121,9 @@ export async function createApp(o: AppOptions): Promise<MoviesApp> {
     now: o.now,
     pollMs: o.pollMs,
     onFinished: (displayId) => vote.finished(displayId),
+    // The same pinned connection the app browses the server with. Never logs the link.
+    warm: (url, startAt) => warmHls(http, url, startAt, o.warmSlowStartMs != null ? { slowStartMs: o.warmSlowStartMs } : {}),
+    ...(o.noPictureMs != null ? { noPictureMs: o.noPictureMs } : {}),
   });
   // The guest vote: the winner goes on through the same player as a staff pick.
   const vote: Vote = new Vote({
@@ -348,7 +359,7 @@ export async function createApp(o: AppOptions): Promise<MoviesApp> {
       const displayId = str(b.displayId, 200);
       const itemId = str(b.itemId, 200);
       if (!displayId || !itemId) throw new BadRequest("Pick a movie and a TV.");
-      const r = await player.play(displayId, itemId, { resume: b.resume !== false, ...trackChoice(b) });
+      const r = await player.play(displayId, itemId, { resume: b.resume !== false, ...trackChoice(b), ...(isQuality(b.quality) ? { quality: b.quality } : {}) });
       res.json({ ok: true, value: r });
     }),
   );
@@ -476,6 +487,16 @@ export async function createApp(o: AppOptions): Promise<MoviesApp> {
       const choice = trackChoice((req.body ?? {}) as Record<string, unknown>);
       const r = await player.setTracks(String(req.params.id), choice);
       res.json({ ok: true, value: player.nowPlaying(String(req.params.id)), inPlace: r.inPlace });
+    }),
+  );
+
+  admin.post(
+    "/tvs/:id/quality",
+    safe(async (req, res) => {
+      const q = ((req.body ?? {}) as Record<string, unknown>).quality;
+      if (!isQuality(q)) throw new BadRequest("Pick a quality.");
+      await player.setQuality(String(req.params.id), q);
+      res.json({ ok: true, value: player.nowPlaying(String(req.params.id)) });
     }),
   );
 

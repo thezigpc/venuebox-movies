@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.6.0 (2026-11-27)
+- **Picture quality.** Staff pick Auto, Original, 1080p or 720p before a movie starts (the
+  details sheet) and change it while it plays (the remote; the stream starts again at the
+  same spot). The choice stays for the rest of a series or collection.
+- **Auto falls back to 1080p** when 4K can't work:
+  - subtitles burned into a 4K picture (the server converts the whole picture, too slowly
+    at 4K) are made at 1080p from the start;
+  - a conversion the server can't keep up with (timed before the TV gets it);
+  - a TV that reports an error on the 4K stream, or says "playing" for a minute with no
+    place in the movie (an Apple TV's "no" sign). Tried once, then it's an error.
+  - Original never falls back.
+- **The stream is started on the server before the TV is handed it.** The app fetches the
+  part the TV will ask for first, so the TV doesn't wait through a slow start (about 20 s
+  for burned-in subtitles on a big file), and a stream the server can't make is reported to
+  staff in words instead of an error on the TV.
+- Fix: the "no TVs" text no longer names Rokus (the box doesn't offer them for video until
+  there's a Venuebox Roku channel).
+
 ## 0.5.3 (2026-11-21)
 - A vote's winner no longer starts by itself unless staff ask for it. By default, when a vote
   closes, staff see the full result and press "Play it" (or clear it). "Start the winner by
